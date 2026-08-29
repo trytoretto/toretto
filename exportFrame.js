@@ -80,27 +80,18 @@ function createSceneCapture(camera) {
     throw new Error("The projected scene is too large to encode as one PNG. Reduce explosion or zoom out first.");
   }
 
-  const clone = camera.cloneNode(true);
-  clone.querySelectorAll("[data-export-ignore]").forEach((element) => element.remove());
-  clone.setAttribute("aria-hidden", "true");
-  clone.inert = true;
-  Object.assign(clone.style, {
-    position: "absolute",
-    left: `${-bounds.left + SCENE_PADDING}px`,
-    top: `${-bounds.top + SCENE_PADDING}px`,
-    width: `${camera.clientWidth}px`,
-    height: `${camera.clientHeight}px`,
-    minWidth: "0",
-    minHeight: "0",
-    overflow: "visible",
-    background: "transparent",
-    backgroundColor: "transparent",
-    boxShadow: "none",
-    pointerEvents: "none",
-  });
+  const stage = camera.querySelector(".spatializer-stage");
+  if (!stage) throw new Error("The spatial stage could not be prepared for export.");
 
-  const wrapper = document.createElement("div");
-  Object.assign(wrapper.style, {
+  const originalCameraWidth = camera.clientWidth;
+  const originalCameraHeight = camera.clientHeight;
+  const cameraStyleText = camera.getAttribute("style");
+  const stageStyleText = stage.getAttribute("style");
+  const cameraStyle = getComputedStyle(camera);
+  const [originX, originY] = cameraStyle.perspectiveOrigin.split(" ").map(Number.parseFloat);
+
+  camera.dataset.exportScene = "";
+  Object.assign(camera.style, {
     position: "fixed",
     left: "0",
     top: "0",
@@ -112,13 +103,24 @@ function createSceneCapture(camera) {
     background: "transparent",
     backgroundColor: "transparent",
     boxShadow: "none",
+    perspective: cameraStyle.perspective,
+    perspectiveOrigin: `${originX - bounds.left + SCENE_PADDING}px ${originY - bounds.top + SCENE_PADDING}px`,
   });
-  wrapper.setAttribute("aria-hidden", "true");
-  wrapper.inert = true;
-  wrapper.append(clone);
-  document.body.append(wrapper);
+  stage.style.left = `${originalCameraWidth / 2 - bounds.left + SCENE_PADDING}px`;
+  stage.style.top = `${originalCameraHeight / 2 - bounds.top + SCENE_PADDING}px`;
 
-  return { node: wrapper, width, height, cleanup: () => wrapper.remove() };
+  return {
+    node: camera,
+    width,
+    height,
+    cleanup: () => {
+      if (cameraStyleText === null) camera.removeAttribute("style");
+      else camera.setAttribute("style", cameraStyleText);
+      if (stageStyleText === null) stage.removeAttribute("style");
+      else stage.setAttribute("style", stageStyleText);
+      delete camera.dataset.exportScene;
+    },
+  };
 }
 
 function createViewportCapture(camera) {

@@ -8,13 +8,40 @@ function clampZoom(value) {
 }
 
 export function ExportPreview({ src, alt }) {
+  const paneRef = useRef(null);
+  const imageRef = useRef(null);
   const dragRef = useRef(null);
   const [view, setView] = useState({ x: 0, y: 0, zoom: 1 });
 
   useEffect(() => setView({ x: 0, y: 0, zoom: 1 }), [src]);
 
+  const constrainView = (next) => {
+    const pane = paneRef.current;
+    const image = imageRef.current;
+    if (!pane || !image) return { ...next, x: 0, y: 0 };
+    const naturalWidth = image.naturalWidth || 1;
+    const naturalHeight = image.naturalHeight || 1;
+    const fit = Math.min(
+      1,
+      pane.clientWidth / naturalWidth,
+      pane.clientHeight / naturalHeight,
+    );
+    const fittedWidth = naturalWidth * fit;
+    const fittedHeight = naturalHeight * fit;
+    const maxX = Math.max(0, (fittedWidth * next.zoom - pane.clientWidth) / 2);
+    const maxY = Math.max(0, (fittedHeight * next.zoom - pane.clientHeight) / 2);
+    return {
+      ...next,
+      x: Math.max(-maxX, Math.min(maxX, next.x)),
+      y: Math.max(-maxY, Math.min(maxY, next.y)),
+    };
+  };
+
   const changeZoom = (factor) => {
-    setView((current) => ({ ...current, zoom: clampZoom(current.zoom * factor) }));
+    setView((current) => constrainView({
+      ...current,
+      zoom: clampZoom(current.zoom * factor),
+    }));
   };
 
   const beginPan = (event) => {
@@ -25,11 +52,12 @@ export function ExportPreview({ src, alt }) {
   };
 
   const movePan = (event) => {
-    if (!dragRef.current) return;
-    setView((current) => ({
+    const drag = dragRef.current;
+    if (!drag) return;
+    setView((current) => constrainView({
       ...current,
-      x: dragRef.current.startX + event.clientX - dragRef.current.x,
-      y: dragRef.current.startY + event.clientY - dragRef.current.y,
+      x: drag.startX + event.clientX - drag.x,
+      y: drag.startY + event.clientY - drag.y,
     }));
   };
 
@@ -44,6 +72,7 @@ export function ExportPreview({ src, alt }) {
 
   return (
     <div
+      ref={paneRef}
       className="relative grid h-72 cursor-grab touch-none place-items-center overflow-hidden rounded-xl border border-white/10 bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-[length:16px_16px] bg-[position:0_0,0_8px,8px_-8px,-8px_0px] active:cursor-grabbing"
       onPointerDown={beginPan}
       onPointerMove={movePan}
@@ -57,6 +86,7 @@ export function ExportPreview({ src, alt }) {
       aria-label="Export preview. Drag to pan and scroll to zoom."
     >
       <img
+        ref={imageRef}
         className="pointer-events-none max-h-full max-w-full select-none object-contain will-change-transform"
         style={{ transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})` }}
         src={src}
