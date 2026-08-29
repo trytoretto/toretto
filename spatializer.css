@@ -46,16 +46,24 @@ button, input { font: inherit; }
 
 .spatializer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .spatializer-actions button {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 9px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 7px;
   color: #9ca5a3;
   background: rgba(255, 255, 255, .035);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
 }
 .spatializer-actions button:hover { color: #f2f5f4; background: rgba(255, 255, 255, .07); }
 .spatializer-actions button.active { border-color: rgba(102, 228, 179, .35); color: #dff9ee; background: rgba(102, 228, 179, .11); }
+.spatializer-actions button.spatializer-primary { border-color: #66e4b3; color: #102019; background: #66e4b3; font-weight: 700; }
+.spatializer-actions button.spatializer-primary:hover { border-color: #8aefc8; color: #0a1712; background: #8aefc8; }
+.spatializer-mode-group { display: inline-flex; overflow: hidden; border: 1px solid rgba(255, 255, 255, .1); border-radius: 7px; }
+.spatializer-mode-group button { border: 0; border-radius: 0; }
+.spatializer-mode-group button + button { border-inline-start: 1px solid rgba(255, 255, 255, .1); }
 
 .spatializer-camera {
   position: relative;

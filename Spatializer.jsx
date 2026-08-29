@@ -173,10 +173,14 @@ export function Spatializer({ children, onOpenSource }) {
     return () => document.removeEventListener("fullscreenchange", handleFullscreen);
   }, [fitView]);
 
-  const reset = () => {
+  const flatten = () => {
     explosionRef.current = 0;
     updateNodeDepth(0);
     setExplosion(0);
+  };
+
+  const reset = () => {
+    flatten();
     setPerspective(5200);
     setPitch(0);
     setYaw(0);
@@ -284,13 +288,16 @@ export function Spatializer({ children, onOpenSource }) {
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
         </label>
         <div className="spatializer-actions">
-          <button type="button" onClick={onOpenSource}>Source…</button>
-          <button type="button" className={effectiveMode !== "pan" ? "active" : ""} onClick={() => setMode("orbit")}>Orbit</button>
-          <button type="button" className={effectiveMode === "pan" ? "active" : ""} onClick={() => setMode("pan")}>Pan</button>
+          <button type="button" className="spatializer-primary" onClick={onOpenSource}>Source…</button>
+          <div className="spatializer-mode-group" role="group" aria-label="Navigation mode">
+            <button type="button" className={effectiveMode !== "pan" ? "active" : ""} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
+            <button type="button" className={effectiveMode === "pan" ? "active" : ""} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
+          </div>
           <button type="button" onClick={() => setExplosion(1000)}>Explode ×10</button>
           <button type="button" onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
           <button type="button" onClick={fitView}>Fit</button>
-          <button type="button" onClick={reset}>Flat</button>
+          <button type="button" onClick={flatten}>Flat</button>
+          <button type="button" onClick={reset}>Reset</button>
           <button type="button" onClick={() => void toggleFullscreen()}>{isFullscreen ? "Exit full screen" : "Full screen"}</button>
         </div>
       </header>
