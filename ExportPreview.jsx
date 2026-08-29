@@ -97,7 +97,7 @@ export function ExportPreview({ src, alt }) {
       onWheel={(event) => {
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
-        changeZoom(Math.exp(-event.deltaY * 0.0015), {
+        changeZoom(Math.exp(event.deltaY * 0.0015), {
           x: event.clientX - rect.left - rect.width / 2,
           y: event.clientY - rect.top - rect.height / 2,
         });
