@@ -1,0 +1,192 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #090b0d;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+button, input { font: inherit; }
+
+.spatializer-root {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  color: #e8eceb;
+  background: #090b0d;
+}
+
+.spatializer-root:fullscreen { width: 100vw; height: 100vh; }
+
+.spatializer-toolbar {
+  position: relative;
+  z-index: 20;
+  min-height: 66px;
+  padding: 9px 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(13, 16, 18, .96);
+  box-shadow: 0 12px 35px rgba(0, 0, 0, .26);
+  user-select: none;
+}
+
+.spatializer-brand { width: 120px; display: grid; gap: 3px; flex: 0 0 auto; }
+.spatializer-brand span { color: #66e4b3; font: 700 11px ui-monospace, "SFMono-Regular", monospace; letter-spacing: .13em; }
+.spatializer-brand small { color: #6e7876; font: 600 8px ui-monospace, "SFMono-Regular", monospace; }
+
+.spatializer-range { min-width: 150px; flex: 1 1 230px; display: grid; gap: 5px; }
+.spatializer-range span { display: flex; justify-content: space-between; gap: 10px; color: #87918f; font: 600 9px ui-monospace, "SFMono-Regular", monospace; }
+.spatializer-range output { color: #cdd5d2; font-variant-numeric: tabular-nums; }
+.spatializer-range input { width: 100%; accent-color: #66e4b3; }
+.spatializer-lens { max-width: 180px; }
+
+.spatializer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.spatializer-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 7px;
+  color: #9ca5a3;
+  background: rgba(255, 255, 255, .035);
+  cursor: pointer;
+}
+.spatializer-actions button:hover { color: #f2f5f4; background: rgba(255, 255, 255, .07); }
+.spatializer-actions button.active { border-color: rgba(102, 228, 179, .35); color: #dff9ee; background: rgba(102, 228, 179, .11); }
+
+.spatializer-camera {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: clip;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+  background: radial-gradient(circle at 50% 48%, rgba(39, 117, 164, .12), transparent 48%), #090b0d;
+}
+.spatializer-camera.mode-pan { cursor: move; }
+.spatializer-camera.mode-roll { cursor: ew-resize; }
+.spatializer-camera:active { cursor: grabbing; }
+.spatializer-camera:focus-visible { box-shadow: inset 0 0 0 2px rgba(102, 228, 179, .55); }
+
+.spatializer-grid {
+  position: absolute;
+  inset: -100%;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.spatializer-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1440px;
+  height: 900px;
+  margin: -450px 0 0 -720px;
+  transform-style: preserve-3d;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.spatializer-specimen,
+.spatializer-app-host {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-style: preserve-3d;
+}
+
+.spatializer-specimen {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.spatializer-app-host > [data-toretto-root] { width: 100% !important; height: 100% !important; }
+
+.spatializer-specimen [data-spatial-node] {
+  translate: 0 0 var(--spatial-local-z, 0px);
+  transform-style: preserve-3d !important;
+  transition: translate 420ms cubic-bezier(.18, .72, .18, 1), box-shadow 300ms ease;
+  will-change: translate;
+}
+
+.spatializer-root[data-scrubbing-explosion="true"] .spatializer-specimen [data-spatial-node] {
+  transition: box-shadow 300ms ease !important;
+}
+
+.spatializer-root[data-exploded="true"] .spatializer-specimen [data-spatial-clips] {
+  overflow: visible !important;
+}
+
+.spatializer-root[data-exploded="true"] .spatializer-specimen [data-spatial-node] {
+  contain: none !important;
+  content-visibility: visible !important;
+  opacity: 1 !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  clip-path: none !important;
+  -webkit-clip-path: none !important;
+  mask: none !important;
+  -webkit-mask: none !important;
+  isolation: auto !important;
+  mix-blend-mode: normal !important;
+}
+
+.spatializer-root[data-exploded="true"] .spatializer-specimen :is([data-toretto-surface], [role="dialog"]) {
+  box-shadow: 0 28px 65px rgba(0, 0, 0, .32);
+}
+
+.spatializer-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 999px;
+  color: #77827f;
+  background: rgba(9, 12, 14, .78);
+  backdrop-filter: blur(12px);
+  font: 600 9px ui-monospace, "SFMono-Regular", monospace;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.source-backdrop {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  padding: 24px; background: rgba(4, 7, 6, .76); backdrop-filter: blur(16px);
+}
+.source-dialog { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 22px; border: 1px solid #35413c; border-radius: 15px; color: #e9efec; background: #151a18; box-shadow: 0 30px 100px rgba(0, 0, 0, .58); }
+.source-dialog header, .source-dialog footer, .source-row { display: flex; align-items: center; }
+.source-dialog header { justify-content: space-between; margin-bottom: 22px; }.source-dialog header span { color: #65dcae; font: 700 9px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }.source-dialog h2 { margin: 4px 0 0; font-size: 23px; }.source-dialog header button { border: 0; color: #7e8984; background: transparent; font-size: 24px; }
+.source-dialog > label { display: grid; gap: 8px; color: #89958f; font-size: 11px; }.source-row { gap: 8px; }.source-row input { flex: 1; }
+.source-dialog input, .source-dialog textarea { padding: 11px 12px; border: 1px solid #333d38; border-radius: 8px; outline: none; color: #dce5e1; background: #101412; }.source-dialog input:focus, .source-dialog textarea:focus { border-color: #55ba92; box-shadow: 0 0 0 3px rgba(85, 186, 146, .12); }
+.source-dialog textarea { width: 100%; min-height: 210px; resize: vertical; font: 11px/1.55 ui-monospace, monospace; }
+.source-dialog button { padding: 10px 13px; border: 1px solid #4d9e7e; border-radius: 8px; color: #102019; background: #69dbae; cursor: pointer; }.source-dialog button:disabled { opacity: .45; cursor: not-allowed; }.source-dialog button.source-secondary { border-color: #333d38; color: #9aa59f; background: #1b211e; }
+.source-note { margin: 9px 0 20px; color: #68746e; font-size: 10px; line-height: 1.5; }.source-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: #59645f; font-size: 9px; text-transform: uppercase; }.source-divider::before, .source-divider::after { content: ""; flex: 1; height: 1px; background: #29312d; }.source-error { margin: 12px 0 0; padding: 10px; border: 1px solid #633c3c; border-radius: 7px; color: #ffaaa5; background: #2b1d1c; font-size: 10px; line-height: 1.45; }
+.source-dialog footer { justify-content: space-between; gap: 10px; margin-top: 18px; }
+.imported-document { width: 100%; min-height: 100%; position: relative; overflow: auto; color: #111; background: #fff; }.imported-document-label { position: sticky; top: 0; z-index: 100; padding: 8px 12px; color: #b9c6c0; background: #151a18; font: 10px ui-monospace, monospace; }.imported-document-content { min-height: calc(100% - 30px); }
+
+@media (max-width: 900px) {
+  .spatializer-toolbar { gap: 9px; }
+  .spatializer-brand { display: none; }
+  .spatializer-lens { display: none; }
+  .spatializer-actions button { min-height: 30px; padding-inline: 8px; font-size: 11px; }
+}
+
+@media (max-width: 600px) {
+  .spatializer-toolbar { align-items: stretch; flex-wrap: wrap; }
+  .spatializer-range { flex-basis: 100%; }
+  .spatializer-actions { flex: 1; justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spatializer-specimen [data-spatial-node] { transition: none; }
+}

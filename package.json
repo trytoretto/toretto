@@ -1,0 +1,23 @@
+{
+  "name": "toretto",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "repository": "github:trytoretto/toretto",
+  "bugs": "https://github.com/trytoretto/toretto/issues",
+  "homepage": "https://github.com/trytoretto/toretto#readme",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.0",
+    "vite": "^8.2.2"
+  }
+}
