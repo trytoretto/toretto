@@ -6,6 +6,7 @@ const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTI
 const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const TOOLBAR_ACTIVE = "!border-[#66e4b3]/35 !bg-[#66e4b3]/10 !text-[#dff9ee]";
 const MODE_BUTTON = "h-7 cursor-pointer bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
+const SOURCE_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-[#66e4b3] bg-[#66e4b3] px-2.5 text-[11px] font-semibold leading-none text-[#102019] transition-colors hover:border-[#8aefc8] hover:bg-[#8aefc8]";
 
 function wrapAngle(angle) {
   return ((angle + 180) % 360 + 360) % 360 - 180;
@@ -281,7 +282,10 @@ export function Spatializer({ children, onOpenSource }) {
       data-scrubbing-explosion={isScrubbingExplosion ? "true" : "false"}
     >
       <header className="spatializer-toolbar" data-spatializer-ignore="">
-        <div className="spatializer-brand"><span>TORETTO</span><small>{nodeCount} live DOM elements</small></div>
+        <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
+          <div className="spatializer-brand"><span>TORETTO</span><small>{nodeCount} live DOM elements</small></div>
+          <button type="button" className={SOURCE_BUTTON} onClick={onOpenSource}>Source…</button>
+        </div>
         <label className="spatializer-range">
           <span>Explosion <output>{explosion}%</output></span>
           <input type="range" min="0" max="10000" step="5" value={explosion} onInput={handleExplosionInput} />
@@ -291,7 +295,6 @@ export function Spatializer({ children, onOpenSource }) {
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
         </label>
         <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
-          <button type="button" className="h-7 cursor-pointer whitespace-nowrap rounded-md border border-[#66e4b3] bg-[#66e4b3] px-2.5 text-[11px] font-semibold leading-none text-[#102019] transition-colors hover:border-[#8aefc8] hover:bg-[#8aefc8]" onClick={onOpenSource}>Source…</button>
           <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
