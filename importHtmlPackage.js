@@ -106,8 +106,17 @@ async function prepareDocument(htmlFile, files) {
     element.removeAttribute("srcset");
     element.removeAttribute("action");
     element.removeAttribute("formaction");
-    if (element.tagName === "A") element.removeAttribute("href");
+    if (element.tagName === "A") {
+      const href = element.getAttribute("href") || "";
+      if (/^(https?:|mailto:|tel:)/i.test(href.trim())) {
+        element.setAttribute("target", "_blank");
+        element.setAttribute("rel", "noopener noreferrer");
+      } else {
+        element.removeAttribute("href");
+      }
+    }
     for (const attribute of URL_ATTRIBUTES) {
+      if (attribute === "href" && element.tagName === "A") continue;
       const reference = element.getAttribute(attribute);
       if (!reference) continue;
       if (/^data:/i.test(reference)) continue;

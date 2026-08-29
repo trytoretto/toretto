@@ -27,7 +27,7 @@ function spatialWeight(element, computed) {
   return structuralWeight + stackingWeight;
 }
 
-export function Spatializer({ children, onOpenSource }) {
+export function Spatializer({ children, contentKey, onOpenSource }) {
   const rootRef = useRef(null);
   const cameraRef = useRef(null);
   const specimenRef = useRef(null);
@@ -51,6 +51,7 @@ export function Spatializer({ children, onOpenSource }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(0.7);
+  const [interactionTarget, setInteractionTarget] = useState("canvas");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isScrubbingExplosion, setIsScrubbingExplosion] = useState(false);
   const [isAltHeld, setIsAltHeld] = useState(false);
@@ -148,6 +149,8 @@ export function Spatializer({ children, onOpenSource }) {
   }, [indexDom]);
 
   useEffect(() => updateNodeDepth(explosion), [explosion, updateNodeDepth]);
+
+  useEffect(() => setInteractionTarget("canvas"), [contentKey]);
 
   useEffect(() => () => {
     window.clearTimeout(scrubTimerRef.current);
@@ -332,6 +335,7 @@ export function Spatializer({ children, onOpenSource }) {
   };
 
   const beginDrag = (event) => {
+    if (contentKey && event.button === 0 && event.target.closest?.("a[href]")) return;
     event.preventDefault();
     cameraRef.current?.focus({ preventScroll: true });
     dragRef.current = {
@@ -370,7 +374,15 @@ export function Spatializer({ children, onOpenSource }) {
       setPan((current) => ({ x: current.x - event.deltaY, y: current.y }));
       return;
     }
-    const factor = Math.exp(event.deltaY * 0.0012);
+    if (contentKey && (interactionTarget === "page" || event.metaKey || event.ctrlKey)) {
+      const page = specimenRef.current?.querySelector(".imported-document");
+      if (page) {
+        page.scrollLeft += event.deltaX;
+        page.scrollTop += event.deltaY;
+      }
+      return;
+    }
+    const factor = Math.exp(-event.deltaY * 0.0012);
     setZoom((current) => Math.max(0.12, Math.min(4, current * factor)));
   };
 
@@ -427,6 +439,7 @@ export function Spatializer({ children, onOpenSource }) {
       ref={rootRef}
       data-exploded={explosion > 0 ? "true" : "false"}
       data-scrubbing-explosion={isScrubbingExplosion ? "true" : "false"}
+      data-interaction-target={contentKey ? interactionTarget : undefined}
     >
       <header className="spatializer-toolbar" data-spatializer-ignore="">
         <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
@@ -443,11 +456,15 @@ export function Spatializer({ children, onOpenSource }) {
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
         </label>
         <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
+          {contentKey && <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation target">
+            <button type="button" className={`${MODE_BUTTON} ${interactionTarget === "canvas" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={interactionTarget === "canvas"} onClick={() => setInteractionTarget("canvas")}>Canvas</button>
+            <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${interactionTarget === "page" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={interactionTarget === "page"} onClick={() => setInteractionTarget("page")}>Page</button>
+          </div>}
           <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => setExplosion(1000)}>Explode ×10</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { explosionRef.current = 1000; updateNodeDepth(1000); setExplosion(1000); }}>Explode ×10</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
@@ -476,7 +493,11 @@ export function Spatializer({ children, onOpenSource }) {
           </div>
         </div>
         <div className="spatializer-hint" data-spatializer-ignore="" data-export-ignore="">
-          {effectiveMode === "orbit"
+          {contentKey
+            ? interactionTarget === "page"
+              ? "Wheel scrolls Page · Canvas button returns to Canvas navigation"
+              : "Wheel zooms Canvas · ⌘/Ctrl-wheel scrolls Page"
+            : effectiveMode === "orbit"
             ? "Drag to orbit · Shift: pan · Option: roll"
             : effectiveMode === "roll"
               ? "Option-drag to roll · Release Option to orbit"
@@ -485,7 +506,7 @@ export function Spatializer({ children, onOpenSource }) {
               : "Release Shift to orbit · Wheel to zoom"}
         </div>
       </main>
-      {exportOpen && <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#040706]/80 p-6 backdrop-blur-xl" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && closeExport()}><section className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#151a18] text-[#e9efec] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="export-title"><header className="flex items-start justify-between border-b border-white/10 px-5 py-4"><div><span className="font-mono text-[9px] font-bold tracking-[0.12em] text-[#65dcae] uppercase">Frame export</span><h2 className="mt-1 text-base font-semibold" id="export-title">Export transparent PNG</h2></div><button type="button" className="p-1 text-xl leading-none text-[#7e8984] hover:text-white" onClick={closeExport} aria-label="Close">×</button></header>{pendingExport ? <div className="grid gap-4 p-5"><ExportPreview key={`bounded-${pendingExport.url}`} src={pendingExport.url} alt="Final transparent PNG preview" footer={exportPreviewFooter} /><div className="grid gap-1"><strong className="text-xs font-semibold">{pendingExport.scope === "scene" ? "Entire scene" : "Viewport frame"} ready</strong>{didSaveExport ? <a className="w-fit max-w-full truncate font-mono text-[10px] text-[#75e5b9] underline decoration-[#75e5b9]/40 underline-offset-2 hover:text-[#a2f3d3]" href={pendingExport.url} target="_blank" rel="noreferrer" title="Open the exported PNG">{pendingExport.filename} ↗</a> : <span className="truncate font-mono text-[10px] text-[#718079]">{pendingExport.filename}</span>}<span className="text-[10px] text-[#718079]">{pendingExport.width} × {pendingExport.height}px · {pendingExport.pixelRatio.toFixed(2)}× · transparent PNG</span>{exportStatus && <span className="mt-1 text-[10px] text-[#aab5b0]" role="status">{exportStatus}</span>}</div></div> : <div className="grid gap-4 p-5"><p className="m-0 text-[11px] leading-5 text-[#7e8984]">Choose whether to preserve the visible camera crop or include every projected DOM layer. Both exports omit Toretto's canvas grid and use a transparent background.</p><div className="grid grid-cols-2 gap-3">{["viewport", "scene"].map((scope) => { const preview = exportPreviews[scope]; const selected = exportScope === scope; return <button type="button" key={scope} className={`overflow-hidden rounded-xl border text-start transition-colors ${selected ? "border-[#66e4b3]/60 bg-[#66e4b3]/[0.06]" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"}`} aria-pressed={selected} onClick={() => setExportScope(scope)}><div className="flex h-40 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-[length:14px_14px] bg-[position:0_0,0_7px,7px_-7px,-7px_0px]">{preview?.url ? <img className="block h-full w-full object-contain object-center" src={preview.url} alt={`${scope} export preview`} /> : <span className="text-[10px] text-[#66716c]">{preview?.error || (isPreviewingExport ? "Rendering preview…" : "Preview unavailable")}</span>}</div><div className="grid gap-1 p-3"><strong className="text-[11px] font-semibold text-[#e4ebe8]">{scope === "viewport" ? "Viewport frame" : "Entire scene"}</strong><span className="text-[9px] leading-4 text-[#718079]">{scope === "viewport" ? "Exact visible canvas crop" : "Every projected layer, unclipped"}</span>{preview?.captureWidth && <span className="font-mono text-[9px] text-[#5f6c66]">{preview.captureWidth} × {preview.captureHeight} CSS px</span>}</div></button>; })}</div>{exportStatus && <p className="m-0 text-[10px] text-[#ffaaa5]" role="alert">{exportStatus}</p>}</div>}<footer className="flex items-center justify-between border-t border-white/10 px-5 py-3"><span className="text-[9px] text-[#68746e]">PNG · transparent · up to 4× · 16,384px max</span><div className="flex gap-2">{pendingExport ? <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={backToExportOptions}>Back</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8]" onClick={() => void saveExport()}>Save PNG…</button></> : <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={closeExport}>Cancel</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8] disabled:opacity-50" disabled={isPreviewingExport || isExporting} onClick={() => void exportFrame(exportScope)}>{isExporting ? "Rendering…" : "Preview…"}</button></>}</div></footer></section></div>}
+      {exportOpen && <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#040706]/80 p-6 backdrop-blur-xl" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && closeExport()}><section className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#151a18] text-[#e9efec] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="export-title"><header className="flex items-start justify-between border-b border-white/10 px-5 py-4"><div><span className="font-mono text-[9px] font-bold tracking-[0.12em] text-[#65dcae] uppercase">Frame export</span><h2 className="mt-1 text-base font-semibold" id="export-title">Export transparent PNG</h2></div><button type="button" className="p-1 text-xl leading-none text-[#7e8984] hover:text-white" onClick={closeExport} aria-label="Close">×</button></header>{pendingExport ? <div className="grid gap-4 p-5"><ExportPreview key={`bounded-${pendingExport.url}`} src={pendingExport.url} alt="Final transparent PNG preview" footer={exportPreviewFooter} /><div className="grid gap-1"><strong className="text-xs font-semibold">{pendingExport.scope === "scene" ? "Entire scene" : "Canvas frame"} ready</strong>{didSaveExport ? <a className="w-fit max-w-full truncate font-mono text-[10px] text-[#75e5b9] underline decoration-[#75e5b9]/40 underline-offset-2 hover:text-[#a2f3d3]" href={pendingExport.url} target="_blank" rel="noreferrer" title="Open the exported PNG">{pendingExport.filename} ↗</a> : <span className="truncate font-mono text-[10px] text-[#718079]">{pendingExport.filename}</span>}<span className="text-[10px] text-[#718079]">{pendingExport.width} × {pendingExport.height}px · {pendingExport.pixelRatio.toFixed(2)}× · transparent PNG</span>{exportStatus && <span className="mt-1 text-[10px] text-[#aab5b0]" role="status">{exportStatus}</span>}</div></div> : <div className="grid gap-4 p-5"><p className="m-0 text-[11px] leading-5 text-[#7e8984]">Choose whether to preserve the visible Canvas crop or include every projected DOM layer. Both exports omit Toretto's Canvas grid and use a transparent background.</p><div className="grid grid-cols-2 gap-3">{["viewport", "scene"].map((scope) => { const preview = exportPreviews[scope]; const selected = exportScope === scope; return <button type="button" key={scope} className={`overflow-hidden rounded-xl border text-start transition-colors ${selected ? "border-[#66e4b3]/60 bg-[#66e4b3]/[0.06]" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"}`} aria-pressed={selected} onClick={() => setExportScope(scope)}><div className="flex h-40 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-[length:14px_14px] bg-[position:0_0,0_7px,7px_-7px,-7px_0px]">{preview?.url ? <img className="block h-full w-full object-contain object-center" src={preview.url} alt={`${scope} export preview`} /> : <span className="text-[10px] text-[#66716c]">{preview?.error || (isPreviewingExport ? "Rendering preview…" : "Preview unavailable")}</span>}</div><div className="grid gap-1 p-3"><strong className="text-[11px] font-semibold text-[#e4ebe8]">{scope === "viewport" ? "Canvas frame" : "Entire scene"}</strong><span className="text-[9px] leading-4 text-[#718079]">{scope === "viewport" ? "Exact visible Canvas crop" : "Every projected layer, unclipped"}</span>{preview?.captureWidth && <span className="font-mono text-[9px] text-[#5f6c66]">{preview.captureWidth} × {preview.captureHeight} CSS px</span>}</div></button>; })}</div>{exportStatus && <p className="m-0 text-[10px] text-[#ffaaa5]" role="alert">{exportStatus}</p>}</div>}<footer className="flex items-center justify-between border-t border-white/10 px-5 py-3"><span className="text-[9px] text-[#68746e]">PNG · transparent · up to 4× · 16,384px max</span><div className="flex gap-2">{pendingExport ? <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={backToExportOptions}>Back</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8]" onClick={() => void saveExport()}>Save PNG…</button></> : <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={closeExport}>Cancel</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8] disabled:opacity-50" disabled={isPreviewingExport || isExporting} onClick={() => void exportFrame(exportScope)}>{isExporting ? "Rendering…" : "Preview…"}</button></>}</div></footer></section></div>}
     </div>
   );
 }

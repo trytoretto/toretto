@@ -98,6 +98,9 @@ button, input { font-family: inherit; }
   -webkit-user-select: none;
 }
 
+.spatializer-specimen .imported-document a[href] { pointer-events: auto; cursor: pointer; }
+.spatializer-root[data-interaction-target="page"] .spatializer-specimen .imported-document { pointer-events: auto; }
+
 .spatializer-app-host > [data-toretto-root] { width: 100% !important; height: 100% !important; }
 
 .spatializer-specimen [data-spatial-node] {
@@ -135,6 +138,12 @@ button, input { font-family: inherit; }
   -webkit-mask: none !important;
   isolation: auto !important;
   mix-blend-mode: normal !important;
+}
+
+/* Keep zero-size framework wrappers from flattening their visible descendants
+   without promoting those wrappers into scene layers of their own. */
+.spatializer-root[data-exploded="true"] .spatializer-specimen :not(svg, svg *) {
+  transform-style: preserve-3d !important;
 }
 
 .spatializer-root[data-exploded="true"] .spatializer-specimen :is([data-toretto-surface], [role="dialog"]) {

@@ -15,9 +15,14 @@ function sanitizeMarkup(markup) {
   parsed.querySelectorAll("*").forEach((element) => {
     [...element.attributes].forEach((attribute) => {
       const name = attribute.name.toLowerCase();
+      if (name === "href" && element.tagName === "A" && /^(https?:|mailto:|tel:)/i.test(attribute.value.trim())) return;
       if (name.startsWith("on") || name === "srcdoc" || URL_ATTRIBUTES.has(name)) element.removeAttribute(attribute.name);
       if (name === "style" && /url\s*\(|expression\s*\(|@import/i.test(attribute.value)) element.removeAttribute(attribute.name);
     });
+    if (element.tagName === "A" && element.hasAttribute("href")) {
+      element.setAttribute("target", "_blank");
+      element.setAttribute("rel", "noopener noreferrer");
+    }
   });
   const content = parsed.body.innerHTML.trim();
   if (!content) throw new Error("No displayable HTML was found.");

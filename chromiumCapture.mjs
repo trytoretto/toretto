@@ -154,7 +154,9 @@ export async function captureRenderedUrl(value) {
       const replaceResources = (value) => {
         let output = String(value || "");
         for (const [url, dataUrl] of Object.entries(resourceMap)) output = output.split(url).join(dataUrl);
-        return output;
+        return output
+          .replace(/url\(\s*["']?#.+?["']?\s*\)/gi, "none")
+          .replace(/url\(\s*(["']?)https?:[^)'\"]+\1\s*\)/gi, "none");
       };
       const pseudoContent = (computed) => {
         const value = computed.content;
@@ -186,7 +188,31 @@ export async function captureRenderedUrl(value) {
           const name = attribute.name.toLowerCase();
           if (name.startsWith("on") || ["srcdoc", "action", "formaction"].includes(name)) target.removeAttribute(attribute.name);
         });
-        if (source instanceof HTMLImageElement) target.setAttribute("src", resourceMap[source.currentSrc] || source.currentSrc);
+        if (source instanceof HTMLImageElement) {
+          const safeSource = resourceMap[source.currentSrc]
+            || (/^data:/i.test(source.currentSrc) ? source.currentSrc : "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=");
+          target.setAttribute("src", safeSource);
+        }
+        if (source instanceof HTMLVideoElement) {
+          const placeholder = document.createElement("div");
+          placeholder.setAttribute("style", target.getAttribute("style") || "");
+          placeholder.setAttribute("aria-hidden", "true");
+          placeholder.setAttribute("data-video-placeholder", "");
+          target.replaceWith(placeholder);
+        }
+        if (source instanceof HTMLSourceElement) {
+          target.removeAttribute("src");
+          target.removeAttribute("srcset");
+        }
+        if (source instanceof SVGImageElement) {
+          target.removeAttribute("href");
+          target.removeAttribute("xlink:href");
+        }
+        if (source instanceof HTMLAnchorElement && /^https?:$/i.test(new URL(source.href).protocol)) {
+          target.setAttribute("href", source.href);
+          target.setAttribute("target", "_blank");
+          target.setAttribute("rel", "noopener noreferrer");
+        }
         if (source instanceof HTMLInputElement) target.setAttribute("value", source.value);
         if (source instanceof HTMLTextAreaElement) target.textContent = source.value;
         if (source instanceof HTMLCanvasElement) {
@@ -195,14 +221,19 @@ export async function captureRenderedUrl(value) {
             image.src = source.toDataURL("image/png");
             image.setAttribute("style", target.getAttribute("style") || "");
             target.replaceWith(image);
-          } catch { /* A cross-origin canvas remains an empty surface. */ }
+          } catch {
+            const placeholder = document.createElement("div");
+            placeholder.setAttribute("style", target.getAttribute("style") || "");
+            placeholder.setAttribute("aria-hidden", "true");
+            placeholder.setAttribute("data-canvas-placeholder", "");
+            target.replaceWith(placeholder);
+          }
         } else {
           copyPseudo(source, target, "::before");
           copyPseudo(source, target, "::after");
         }
       });
       cloneBody.querySelectorAll(blocked).forEach((element) => element.remove());
-      cloneBody.querySelectorAll("a").forEach((element) => element.removeAttribute("href"));
       cloneBody.querySelectorAll("[srcset]").forEach((element) => element.removeAttribute("srcset"));
       const wrapper = document.createElement("div");
       wrapper.setAttribute("data-rendered-page", "");

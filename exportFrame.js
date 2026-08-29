@@ -150,26 +150,34 @@ async function renderTransparentPng(camera, scope, preview, options = {}) {
     const pixelRatio = preview ? previewScale : exportScale(width, height);
     const outputWidth = Math.round(width * pixelRatio);
     const outputHeight = Math.round(height * pixelRatio);
-    const blob = await toBlob(node, {
-      width,
-      height,
-      pixelRatio,
-      backgroundColor: "transparent",
-      cacheBust: true,
-      filter: (candidate) => !(
-        candidate instanceof Element
-        && candidate.hasAttribute("data-export-ignore")
-      ),
-      style: {
-        background: "transparent",
+    let blob;
+    try {
+      blob = await toBlob(node, {
+        width,
+        height,
+        pixelRatio,
         backgroundColor: "transparent",
-        boxShadow: "none",
-      },
-    });
+        cacheBust: true,
+        filter: (candidate) => !(
+          candidate instanceof Element
+          && candidate.hasAttribute("data-export-ignore")
+        ),
+        style: {
+          background: "transparent",
+          backgroundColor: "transparent",
+          boxShadow: "none",
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error) throw error;
+      const failedSource = error?.target?.currentSrc || error?.target?.src;
+      throw new Error(failedSource ? `An image could not be prepared for export: ${failedSource}` : String(error || "The frame could not be rendered."));
+    }
 
     if (!blob) throw new Error("The browser could not encode this frame as PNG.");
 
-    const filename = preview ? "" : `toretto-${scope}-${timestamp()}-${pixelRatio.toFixed(2)}x.png`;
+    const filenameScope = scope === "viewport" ? "canvas" : scope;
+    const filename = preview ? "" : `toretto-${filenameScope}-${timestamp()}-${pixelRatio.toFixed(2)}x.png`;
     return { blob, filename, width: outputWidth, height: outputHeight, captureWidth: width, captureHeight: height, pixelRatio, scope, scenePadding };
   } finally {
     capture?.cleanup();
