@@ -3,6 +3,9 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 const APP_WIDTH = 1440;
 const APP_HEIGHT = 900;
 const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTICLE", "BUTTON", "DIALOG"]);
+const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
+const TOOLBAR_ACTIVE = "!border-[#66e4b3]/35 !bg-[#66e4b3]/10 !text-[#dff9ee]";
+const MODE_BUTTON = "h-7 cursor-pointer bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 
 function wrapAngle(angle) {
   return ((angle + 180) % 360 + 360) % 360 - 180;
@@ -287,18 +290,18 @@ export function Spatializer({ children, onOpenSource }) {
           <span>Lens <output>{perspective}px</output></span>
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
         </label>
-        <div className="spatializer-actions">
-          <button type="button" className="spatializer-primary" onClick={onOpenSource}>Source…</button>
-          <div className="spatializer-mode-group" role="group" aria-label="Navigation mode">
-            <button type="button" className={effectiveMode !== "pan" ? "active" : ""} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
-            <button type="button" className={effectiveMode === "pan" ? "active" : ""} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
+        <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
+          <button type="button" className="h-7 cursor-pointer whitespace-nowrap rounded-md border border-[#66e4b3] bg-[#66e4b3] px-2.5 text-[11px] font-semibold leading-none text-[#102019] transition-colors hover:border-[#8aefc8] hover:bg-[#8aefc8]" onClick={onOpenSource}>Source…</button>
+          <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
+            <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
+            <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" onClick={() => setExplosion(1000)}>Explode ×10</button>
-          <button type="button" onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
-          <button type="button" onClick={fitView}>Fit</button>
-          <button type="button" onClick={flatten}>Flat</button>
-          <button type="button" onClick={reset}>Reset</button>
-          <button type="button" onClick={() => void toggleFullscreen()}>{isFullscreen ? "Exit full screen" : "Full screen"}</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => setExplosion(1000)}>Explode ×10</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={reset}>Reset</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => void toggleFullscreen()}>{isFullscreen ? "Exit full screen" : "Full screen"}</button>
         </div>
       </header>
       <main
