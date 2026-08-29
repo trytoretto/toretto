@@ -431,7 +431,7 @@ export function Spatializer({ children, onOpenSource }) {
       <header className="spatializer-toolbar" data-spatializer-ignore="">
         <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
           <div className="spatializer-brand"><span>TORETTO</span><small>{nodeCount} live DOM elements</small></div>
-          <button type="button" className={SOURCE_BUTTON} onClick={onOpenSource}>Source…</button>
+          <button type="button" className={SOURCE_BUTTON} onClick={onOpenSource}>Open…</button>
           <button type="button" className={`${TOOLBAR_BUTTON} text-[#c7f4e2]`} onClick={() => void openExport()}>Export…</button>
         </div>
         <label className="spatializer-range">
