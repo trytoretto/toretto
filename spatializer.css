@@ -171,7 +171,7 @@ button, input { font-family: inherit; }
 .source-file { display: flex; align-items: center; gap: 10px; }.source-file span { color: #68746e; font-size: 10px; }.source-file input { display: none; }
 .source-file-actions { flex-wrap: wrap; }.source-file-actions span { flex-basis: 100%; }
 .source-dialog footer { justify-content: space-between; gap: 10px; margin-top: 18px; }.source-footer-actions { display: flex; align-items: center; gap: 8px; }
-.imported-document { width: 100%; min-height: 100%; position: relative; overflow: auto; color: #111; background: #fff; }.imported-document-label { position: sticky; top: 0; z-index: 100; padding: 8px 12px; color: #b9c6c0; background: #151a18; font: 10px ui-monospace, monospace; }.imported-document-content { min-height: calc(100% - 30px); }
+.imported-document { width: 100%; min-height: 100%; position: relative; overflow: auto; color: #111; background: #fff; }.imported-document-content { min-height: 100%; }
 
 @media (max-width: 900px) {
   .spatializer-toolbar { gap: 9px; }

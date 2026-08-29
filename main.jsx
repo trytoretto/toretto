@@ -29,8 +29,7 @@ function sanitizeMarkup(markup) {
 
 function ImportedDocument({ markup, label }) {
   return (
-    <div className="imported-document" data-toretto-root="">
-      <div className="imported-document-label" data-toretto-surface="">{label}</div>
+    <div className="imported-document" data-toretto-root="" aria-label={label}>
       <div className="imported-document-content" dangerouslySetInnerHTML={{ __html: markup }} />
     </div>
   );
@@ -58,7 +57,8 @@ function SourceDialog({ onClose, onLoad, onDemo }) {
     setLoading(true);
     setError("");
     try {
-      const normalized = new URL(url.includes("://") ? url : `https://${url}`);
+      const localHost = /^(?:localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)(?::|\/|$)/i.test(url.trim());
+      const normalized = new URL(url.includes("://") ? url : `${localHost ? "http" : "https"}://${url}`);
       const response = await fetch("/api/render-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -70,7 +70,7 @@ function SourceDialog({ onClose, onLoad, onDemo }) {
       onClose();
     } catch (nextError) {
       const detail = nextError instanceof Error ? nextError.message : "The website could not be loaded.";
-      setError(`${detail} The local Chromium renderer handles public pages; the extension will capture signed-in pages.`);
+      setError(`${detail} Chromium captures public and local-development pages; the extension will capture signed-in pages.`);
     } finally {
       setLoading(false);
     }
@@ -115,7 +115,7 @@ function SourceDialog({ onClose, onLoad, onDemo }) {
       <section className="source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-title">
         <header><div><span>Scene source</span><h2 id="source-title">Load a DOM</h2></div><button type="button" onClick={onClose} aria-label="Close">×</button></header>
         <label><span>Website URL</span><div className="source-row"><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com" /><button type="button" disabled={!url || loading} onClick={() => void importUrl()}>{loading ? "Loading…" : "Load URL"}</button></div></label>
-        <p className="source-note">Public URLs render in a local background Chromium session. The browser extension will capture signed-in pages.</p>
+        <p className="source-note">Public and local-development URLs render in a background Chromium session. Toretto blocks self-capture; the extension will capture signed-in pages.</p>
         <div className="source-file source-file-actions"><button type="button" className="source-secondary" disabled={loading} onClick={() => fileInputRef.current?.click()}>Open HTML file…</button><button type="button" className="source-secondary" disabled={loading} onClick={() => folderInputRef.current?.click()}>Open website folder…</button><button type="button" className="source-secondary" disabled={loading} onClick={() => pdfInputRef.current?.click()}>Open PDF…</button><span>HTML packages preserve structure; PDFs preserve the rendered page.</span><input ref={fileInputRef} type="file" accept=".html,.htm,text/html" hidden onChange={(event) => void importFiles(event)} /><input ref={folderInputRef} type="file" webkitdirectory="" multiple hidden onChange={(event) => void importFiles(event)} /><input ref={pdfInputRef} type="file" accept=".pdf,application/pdf" hidden onChange={(event) => void importPdf(event)} /></div>
         <div className="source-divider"><span>or paste HTML</span></div>
         <label><span>HTML</span><textarea value={markup} onChange={(event) => setMarkup(event.target.value)} spellCheck="false" /></label>

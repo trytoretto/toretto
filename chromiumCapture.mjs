@@ -13,6 +13,7 @@ const CHROME_PATHS = [
 ].filter(Boolean);
 const MAX_RESOURCE_BYTES = 10 * 1024 * 1024;
 const MAX_ELEMENTS = 4000;
+const TORETTO_PORT = String(process.env.TORETTO_PORT || 4178);
 const CAPTURE_STYLES = [
   "align-content", "align-items", "align-self", "background", "background-color", "background-image",
   "background-position", "background-repeat", "background-size", "border", "border-block", "border-color",
@@ -44,14 +45,18 @@ function isPrivateIp(address) {
     || normalized.startsWith("fd") || normalized.startsWith("fe80:");
 }
 
-async function assertPublicUrl(value) {
+function isTorettoOrigin(url) {
+  return new Set(["localhost", "127.0.0.1", "::1", "[::1]"]).has(url.hostname)
+    && String(url.port || (url.protocol === "https:" ? 443 : 80)) === TORETTO_PORT;
+}
+
+async function inspectUrl(value) {
   const url = new URL(value);
   if (!new Set(["http:", "https:"]).has(url.protocol)) throw new Error("Only HTTP and HTTPS URLs can be rendered.");
+  if (isTorettoOrigin(url)) throw new Error("Toretto cannot capture its own studio URL.");
   const addresses = await dns.lookup(url.hostname, { all: true });
-  if (!addresses.length || addresses.some(({ address }) => isPrivateIp(address))) {
-    throw new Error("Local and private-network addresses cannot be rendered.");
-  }
-  return url;
+  if (!addresses.length) throw new Error(`Could not resolve ${url.hostname}.`);
+  return { url, isPrivate: addresses.some(({ address }) => isPrivateIp(address)) };
 }
 
 function chromeExecutable() {
@@ -90,7 +95,8 @@ async function responseAsResource(response) {
 }
 
 export async function captureRenderedUrl(value) {
-  const requestedUrl = await assertPublicUrl(value);
+  const requested = await inspectUrl(value);
+  const requestedUrl = requested.url;
   const browser = await getBrowser();
   const page = await browser.newPage();
   const checkedHosts = new Map();
@@ -98,8 +104,10 @@ export async function captureRenderedUrl(value) {
     const url = new URL(requestUrl);
     if (url.protocol === "data:" || url.protocol === "blob:") return true;
     if (!new Set(["http:", "https:"]).has(url.protocol)) return false;
+    if (isTorettoOrigin(url)) return false;
+    if (requested.isPrivate) return true;
     if (!checkedHosts.has(url.hostname)) {
-      checkedHosts.set(url.hostname, assertPublicUrl(url.href).then(() => true).catch(() => false));
+      checkedHosts.set(url.hostname, inspectUrl(url.href).then((result) => !result.isPrivate).catch(() => false));
     }
     return checkedHosts.get(url.hostname);
   };
@@ -122,7 +130,11 @@ export async function captureRenderedUrl(value) {
   try {
     await page.goto(requestedUrl.href, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForNetworkIdle({ idleTime: 700, timeout: 12000 }).catch(() => {});
-    const finalUrl = await assertPublicUrl(page.url());
+    const finalTarget = await inspectUrl(page.url());
+    if (!requested.isPrivate && finalTarget.isPrivate) {
+      throw new Error("A public URL cannot redirect into the local network.");
+    }
+    const finalUrl = finalTarget.url;
     await page.evaluate(async () => {
       const ready = Promise.all([
         document.fonts?.ready,
