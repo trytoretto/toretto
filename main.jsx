@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { DemoSite } from "./DemoSite";
+import { importHtmlPackage } from "./importHtmlPackage";
 import { Spatializer } from "./Spatializer";
 import "./demo.css";
 import "./spatializer.css";
@@ -35,6 +36,8 @@ function ImportedDocument({ markup, label }) {
 }
 
 function SourceDialog({ onClose, onLoad, onDemo }) {
+  const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
   const [url, setUrl] = useState("");
   const [markup, setMarkup] = useState('<main style="padding: 64px; font-family: system-ui"><h1>Hello, DOM.</h1><p>Every nested element is about to discover the z-axis.</p><section><button>Explode responsibly</button></section></main>');
   const [error, setError] = useState("");
@@ -65,16 +68,34 @@ function SourceDialog({ onClose, onLoad, onDemo }) {
     }
   };
 
+  const importFiles = async (event) => {
+    const files = [...event.currentTarget.files];
+    event.currentTarget.value = "";
+    if (!files.length) return;
+    setLoading(true);
+    setError("");
+    try {
+      const imported = await importHtmlPackage(files);
+      onLoad(imported.markup, imported.label);
+      onClose();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "The HTML file could not be opened.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="source-backdrop" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="source-dialog" role="dialog" aria-modal="true" aria-labelledby="source-title">
         <header><div><span>Scene source</span><h2 id="source-title">Load a DOM</h2></div><button type="button" onClick={onClose} aria-label="Close">×</button></header>
         <label><span>Website URL</span><div className="source-row"><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com" /><button type="button" disabled={!url || loading} onClick={() => void importUrl()}>{loading ? "Loading…" : "Load URL"}</button></div></label>
         <p className="source-note">URL loading works when the site permits cross-origin requests. The browser extension will inspect arbitrary pages directly.</p>
+        <div className="source-file"><button type="button" className="source-secondary" disabled={loading} onClick={() => fileInputRef.current?.click()}>Open HTML file…</button><button type="button" className="source-secondary" disabled={loading} onClick={() => folderInputRef.current?.click()}>Open website folder…</button><span>Include the saved CSS and image folder for full fidelity.</span><input ref={fileInputRef} type="file" accept=".html,.htm,text/html" hidden onChange={(event) => void importFiles(event)} /><input ref={folderInputRef} type="file" webkitdirectory="" multiple hidden onChange={(event) => void importFiles(event)} /></div>
         <div className="source-divider"><span>or paste HTML</span></div>
         <label><span>HTML</span><textarea value={markup} onChange={(event) => setMarkup(event.target.value)} spellCheck="false" /></label>
         {error && <p className="source-error" role="alert">{error}</p>}
-        <footer><button type="button" className="source-secondary" onClick={() => { onDemo(); onClose(); }}>Use demo</button><button type="button" onClick={() => importMarkup(markup, "Imported HTML")}>Load HTML</button></footer>
+        <footer><button type="button" className="source-secondary" onClick={() => { onDemo(); onClose(); }}>Use demo</button><div className="source-footer-actions"><button type="button" className="source-secondary" onClick={onClose}>Cancel</button><button type="button" onClick={() => importMarkup(markup, "Imported HTML")}>Load HTML</button></div></footer>
       </section>
     </div>
   );
@@ -93,7 +114,11 @@ function TorettoApp() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
+const rootElement = document.getElementById("root");
+const appRoot = import.meta.hot?.data.appRoot || ReactDOM.createRoot(rootElement);
+if (import.meta.hot) import.meta.hot.data.appRoot = appRoot;
+
+appRoot.render(
   <React.StrictMode>
     <TorettoApp />
   </React.StrictMode>,

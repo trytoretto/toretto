@@ -17,6 +17,7 @@
 
 - Use Tailwind utilities for ordinary interface structure, spacing, sizing, typography, and interaction states.
 - Keep authored CSS for perspective, transforms, depth rendering, imported-document isolation, and other spatial behavior that is clearer as a dedicated rule.
+- Treat the top toolbar as the source, camera, viewport, and frame-export surface. Reserve the future bottom toolbar for time-based work: recording, keyframes, playback, animation clips, and timeline editing.
 - Preserve the source document's layout at zero explosion.
 - Keep orbit, pan, roll, zoom, lens, and explosion seekable and deterministic so they can become animation tracks.
 - Respect source stacking contexts where possible, and document visualization heuristics that intentionally differ from browser paint order.
