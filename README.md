@@ -6,7 +6,7 @@ Toretto turns an HTML document into an explorable spatial scene. Orbit, pan, rol
 
 This repository currently contains the standalone proof of concept. The reusable engine and browser extension will be extracted as the project evolves.
 
-Use **Source…** to paste HTML or attempt a URL import. Submitted HTML is sanitized and never executes scripts. Direct URL imports are limited by the target site's cross-origin policy; the planned browser extension will operate on the current page without that restriction.
+Use **Source…** to paste HTML, open a saved website package, import a PDF, or render a public URL through a local background Chromium session. Submitted HTML is sanitized and never executes scripts. PDF pages currently import as faithful visual planes. The planned browser extension will capture live and signed-in pages directly.
 
 ## Development
 

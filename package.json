@@ -14,6 +14,8 @@
   },
   "dependencies": {
     "html-to-image": "^1.11.13",
+    "pdfjs-dist": "^6.3.289",
+    "puppeteer-core": "^25.9.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
