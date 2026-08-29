@@ -5,6 +5,7 @@ const MAX_DIMENSION = 16384;
 const MAX_PIXELS = 120_000_000;
 const SCENE_PADDING = 64;
 const captureLocks = new WeakMap();
+let sceneCaptureId = 0;
 
 function nextPaint() {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -90,7 +91,8 @@ function createSceneCapture(camera) {
   const cameraStyle = getComputedStyle(camera);
   const [originX, originY] = cameraStyle.perspectiveOrigin.split(" ").map(Number.parseFloat);
 
-  camera.dataset.exportScene = "";
+  const captureId = String(++sceneCaptureId);
+  camera.dataset.exportScene = captureId;
   Object.assign(camera.style, {
     position: "fixed",
     left: "0",
@@ -118,7 +120,9 @@ function createSceneCapture(camera) {
       else camera.setAttribute("style", cameraStyleText);
       if (stageStyleText === null) stage.removeAttribute("style");
       else stage.setAttribute("style", stageStyleText);
-      delete camera.dataset.exportScene;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (camera.dataset.exportScene === captureId) delete camera.dataset.exportScene;
+      }));
     },
   };
 }
