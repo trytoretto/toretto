@@ -3,7 +3,7 @@ import { toBlob } from "html-to-image";
 const MAX_SCALE = 4;
 const MAX_DIMENSION = 16384;
 const MAX_PIXELS = 120_000_000;
-const SCENE_PADDING = 64;
+const DEFAULT_SCENE_PADDING = 10;
 const captureLocks = new WeakMap();
 let sceneCaptureId = 0;
 
@@ -73,10 +73,10 @@ function projectedSceneBounds(camera) {
   }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
 }
 
-function createSceneCapture(camera) {
+function createSceneCapture(camera, padding) {
   const bounds = projectedSceneBounds(camera);
-  const width = Math.ceil(bounds.right - bounds.left + SCENE_PADDING * 2);
-  const height = Math.ceil(bounds.bottom - bounds.top + SCENE_PADDING * 2);
+  const width = Math.ceil(bounds.right - bounds.left + padding * 2);
+  const height = Math.ceil(bounds.bottom - bounds.top + padding * 2);
   if (width > 100_000 || height > 100_000) {
     throw new Error("The projected scene is too large to encode as one PNG. Reduce explosion or zoom out first.");
   }
@@ -106,10 +106,10 @@ function createSceneCapture(camera) {
     backgroundColor: "transparent",
     boxShadow: "none",
     perspective: cameraStyle.perspective,
-    perspectiveOrigin: `${originX - bounds.left + SCENE_PADDING}px ${originY - bounds.top + SCENE_PADDING}px`,
+    perspectiveOrigin: `${originX - bounds.left + padding}px ${originY - bounds.top + padding}px`,
   });
-  stage.style.left = `${originalCameraWidth / 2 - bounds.left + SCENE_PADDING}px`;
-  stage.style.top = `${originalCameraHeight / 2 - bounds.top + SCENE_PADDING}px`;
+  stage.style.left = `${originalCameraWidth / 2 - bounds.left + padding}px`;
+  stage.style.top = `${originalCameraHeight / 2 - bounds.top + padding}px`;
 
   return {
     node: camera,
@@ -136,12 +136,13 @@ function createViewportCapture(camera) {
   };
 }
 
-async function renderTransparentPng(camera, scope, preview) {
+async function renderTransparentPng(camera, scope, preview, options = {}) {
   const releaseFrame = await freezeCamera(camera);
   let capture;
+  const scenePadding = Math.max(0, Number(options.scenePadding ?? DEFAULT_SCENE_PADDING));
 
   try {
-    capture = scope === "scene" ? createSceneCapture(camera) : createViewportCapture(camera);
+    capture = scope === "scene" ? createSceneCapture(camera, scenePadding) : createViewportCapture(camera);
     const { node, width, height } = capture;
     if (!width || !height) throw new Error("The canvas has no visible area to export.");
 
@@ -169,17 +170,17 @@ async function renderTransparentPng(camera, scope, preview) {
     if (!blob) throw new Error("The browser could not encode this frame as PNG.");
 
     const filename = preview ? "" : `toretto-${scope}-${timestamp()}-${pixelRatio.toFixed(2)}x.png`;
-    return { blob, filename, width: outputWidth, height: outputHeight, captureWidth: width, captureHeight: height, pixelRatio, scope };
+    return { blob, filename, width: outputWidth, height: outputHeight, captureWidth: width, captureHeight: height, pixelRatio, scope, scenePadding };
   } finally {
     capture?.cleanup();
     releaseFrame();
   }
 }
 
-export function renderPngPreview(camera, scope) {
-  return renderTransparentPng(camera, scope, true);
+export function renderPngPreview(camera, scope, options) {
+  return renderTransparentPng(camera, scope, true, options);
 }
 
-export function exportTransparentPng(camera, scope = "viewport") {
-  return renderTransparentPng(camera, scope, false);
+export function exportTransparentPng(camera, scope = "viewport", options) {
+  return renderTransparentPng(camera, scope, false, options);
 }

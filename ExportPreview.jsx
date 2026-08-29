@@ -7,7 +7,7 @@ function clampZoom(value) {
   return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, value));
 }
 
-export function ExportPreview({ src, alt }) {
+export function ExportPreview({ src, alt, footer = null }) {
   const paneRef = useRef(null);
   const imageRef = useRef(null);
   const dragRef = useRef(null);
@@ -86,9 +86,10 @@ export function ExportPreview({ src, alt }) {
   const reset = () => setView({ x: 0, y: 0, zoom: 1 });
 
   return (
-    <div
+    <div className="overflow-hidden rounded-xl border border-[#39433f]">
+      <div
       ref={paneRef}
-      className="relative grid h-72 cursor-grab touch-none place-items-center overflow-hidden rounded-xl border border-[#39433f] bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-clip-padding bg-[length:16px_16px] bg-[position:0_0,0_8px,8px_-8px,-8px_0px] active:cursor-grabbing"
+      className="relative grid h-72 cursor-grab touch-none place-items-center overflow-hidden bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-clip-padding bg-[length:16px_16px] bg-[position:0_0,0_8px,8px_-8px,-8px_0px] active:cursor-grabbing"
       onPointerDown={beginPan}
       onPointerMove={movePan}
       onPointerUp={endPan}
@@ -118,6 +119,8 @@ export function ExportPreview({ src, alt }) {
         <button type="button" className="h-7 min-w-12 border-x border-white/10 px-2 font-mono text-[9px] text-[#8d9994] hover:bg-white/[0.08]" onClick={reset} aria-label="Reset preview zoom" title="Reset preview">{Math.round(view.zoom * 100)}%</button>
         <button type="button" className="h-7 w-7 text-[12px] text-[#aeb8b4] hover:bg-white/[0.08]" onClick={() => changeZoom(1.25)} aria-label="Zoom in">+</button>
       </div>
+      </div>
+      {footer && <footer className="flex min-h-10 items-center justify-between border-t border-[#39433f] bg-[#111613] px-3 py-2">{footer}</footer>}
     </div>
   );
 }
