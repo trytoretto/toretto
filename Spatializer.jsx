@@ -4,6 +4,12 @@ import { ExportPreview } from "./ExportPreview";
 
 const APP_WIDTH = 1440;
 const APP_HEIGHT = 900;
+const EXPLOSION_CONTROL_MAX = 1000;
+const EXPLOSION_DEPTH_MAX = 10000;
+const EXPLOSION_CURVE = 2.4;
+const ZOOM_CONTROL_MAX = 1000;
+const ZOOM_MIN = 0.12;
+const ZOOM_MAX = 4;
 const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTICLE", "BUTTON", "DIALOG"]);
 const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const TOOLBAR_ACTIVE = "!border-[#66e4b3]/35 !bg-[#66e4b3]/10 !text-[#dff9ee]";
@@ -12,6 +18,27 @@ const SOURCE_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border bo
 
 function wrapAngle(angle) {
   return ((angle + 180) % 360 + 360) % 360 - 180;
+}
+
+function explosionDepth(control) {
+  const progress = Math.max(0, Math.min(1, control / EXPLOSION_CONTROL_MAX));
+  return EXPLOSION_DEPTH_MAX * progress ** EXPLOSION_CURVE;
+}
+
+function explosionControl(depth) {
+  const progress = Math.max(0, Math.min(1, depth / EXPLOSION_DEPTH_MAX));
+  return Math.round(EXPLOSION_CONTROL_MAX * progress ** (1 / EXPLOSION_CURVE));
+}
+
+function zoomFromControl(control) {
+  const progress = Math.max(0, Math.min(1, control / ZOOM_CONTROL_MAX));
+  return ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** progress;
+}
+
+function zoomControl(zoom) {
+  return Math.round(
+    ZOOM_CONTROL_MAX * Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN),
+  );
 }
 
 function spatialWeight(element, computed) {
@@ -44,7 +71,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const previewGenerationRef = useRef(0);
   const explosionRef = useRef(0);
   const maxDepthWeightRef = useRef(0);
-  const [explosion, setExplosion] = useState(0);
+  const [explosionPosition, setExplosionPosition] = useState(0);
   const [perspective, setPerspective] = useState(5200);
   const [mode, setMode] = useState("orbit");
   const [pitch, setPitch] = useState(0);
@@ -67,6 +94,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [pendingExport, setPendingExport] = useState(null);
   const [didSaveExport, setDidSaveExport] = useState(false);
   const [nodeCount, setNodeCount] = useState(0);
+  const explosion = explosionDepth(explosionPosition);
   explosionRef.current = explosion;
   panRef.current = pan;
   zoomRef.current = zoom;
@@ -204,7 +232,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const flatten = () => {
     explosionRef.current = 0;
     updateNodeDepth(0);
-    setExplosion(0);
+    setExplosionPosition(0);
   };
 
   const reset = () => {
@@ -330,7 +358,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
 
   const handleExplosionInput = (event) => {
     setIsScrubbingExplosion(true);
-    setExplosion(Number(event.currentTarget.value));
+    setExplosionPosition(Number(event.currentTarget.value));
     window.clearTimeout(scrubTimerRef.current);
     scrubTimerRef.current = window.setTimeout(() => setIsScrubbingExplosion(false), 120);
   };
@@ -392,7 +420,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       y: event.clientY - cameraRect.top - cameraRect.height / 2,
     } : { x: 0, y: 0 };
     const currentZoom = zoomRef.current;
-    const nextZoom = Math.max(0.12, Math.min(4, currentZoom * factor));
+    const nextZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, currentZoom * factor));
     const ratio = nextZoom / currentZoom;
     if (ratio === 1) return;
     const currentPan = panRef.current;
@@ -416,14 +444,13 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     if (event.key === "ArrowDown") setPan((current) => ({ ...current, y: current.y + panStep }));
     if (event.key.toLowerCase() === "q") setRoll((current) => wrapAngle(current - 8));
     if (event.key.toLowerCase() === "e") setRoll((current) => wrapAngle(current + 8));
-    if (event.key === "+" || event.key === "=") setZoom((current) => Math.min(4, current * 1.12));
-    if (event.key === "-") setZoom((current) => Math.max(0.12, current / 1.12));
+    if (event.key === "+" || event.key === "=") setZoom((current) => Math.min(ZOOM_MAX, current * 1.12));
+    if (event.key === "-") setZoom((current) => Math.max(ZOOM_MIN, current / 1.12));
   };
 
-  // Counter-scale the camera as the stack grows toward it. This keeps the
-  // exploded specimen framed without changing the relative spacing of layers.
-  const depthFit = 1 / (1 + (explosion / 1000) * 0.6);
-  const worldScale = fitScale * depthFit;
+  // Explosion only changes layer depth. Framing remains an explicit camera
+  // choice through zoom, pan, and Fit rather than changing as the stack grows.
+  const worldScale = fitScale;
   const deepestLayerZ = explosion * 0.3 * maxDepthWeightRef.current * worldScale;
   const rotatedStageZ = (
     APP_WIDTH * Math.abs(Math.sin(yaw * Math.PI / 180))
@@ -468,19 +495,45 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           <button type="button" className={`${TOOLBAR_BUTTON} text-[#c7f4e2]`} onClick={() => void openExport()}>Export…</button>
         </div>
         <label className="spatializer-range">
-          <span>Explosion <output>{explosion}%</output></span>
-          <input type="range" min="0" max="10000" step="5" value={explosion} onInput={handleExplosionInput} />
+          <span>Explosion <output>{Math.round(explosion * 0.3)}px gap</output></span>
+          <input
+            type="range"
+            min="0"
+            max={EXPLOSION_CONTROL_MAX}
+            step="1"
+            value={explosionPosition}
+            aria-label="Explosion depth"
+            aria-valuetext={`${Math.round(explosion * 0.3)} pixel layer gap`}
+            onInput={handleExplosionInput}
+          />
         </label>
         <label className="spatializer-range spatializer-lens">
           <span>Lens <output>{perspective}px</output></span>
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
+        </label>
+        <label className="spatializer-range spatializer-zoom">
+          <span>Zoom <output>{Math.round(zoom * 100)}%</output></span>
+          <input
+            type="range"
+            min="0"
+            max={ZOOM_CONTROL_MAX}
+            step="1"
+            value={zoomControl(zoom)}
+            aria-label="Canvas zoom"
+            aria-valuetext={`${Math.round(zoom * 100)} percent`}
+            onInput={(event) => {
+              const nextZoom = zoomFromControl(Number(event.currentTarget.value));
+              zoomRef.current = nextZoom;
+              setZoom(nextZoom);
+            }}
+          />
         </label>
         <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
           <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { explosionRef.current = 1000; updateNodeDepth(1000); setExplosion(1000); }}>Explode ×10</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { explosionRef.current = 1000; updateNodeDepth(1000); setExplosionPosition(explosionControl(1000)); }}>Explode ×10</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
