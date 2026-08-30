@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { exportTransparentPng, renderPngPreview } from "./exportFrame";
+import { exportTransparentPng, measureProjectedSceneBounds, renderPngPreview } from "./exportFrame";
 import { ExportPreview } from "./ExportPreview";
+import torettoMarkUrl from "./toretto-mark.svg";
 
 const APP_WIDTH = 1440;
 const APP_HEIGHT = 900;
@@ -21,9 +22,14 @@ const LENS_MIN = 1600;
 const LENS_DEFAULT = 5200;
 const LENS_MAX = 12000;
 const BIPOLAR_DEADZONE_PX = 2;
+const EXPLOSION_TRANSITION_MS = 420;
+const FLAT_SETTLE_BUFFER_MS = 80;
+const RANGE_THUMB_SIZE = 14;
+const FIT_MARGIN = 32;
+const FIT_MAX_PASSES = 10;
 const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTICLE", "BUTTON", "DIALOG"]);
 const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
-const TOOLBAR_ACTIVE = "!border-[#66e4b3]/35 !bg-[#66e4b3]/10 !text-[#dff9ee]";
+const TOOLBAR_ACTIVE = "relative z-[1] !bg-[#66e4b3]/10 !text-[#dff9ee]";
 const MODE_BUTTON = "h-7 cursor-pointer bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const SOURCE_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-[#66e4b3] bg-[#66e4b3] px-2.5 text-[11px] font-semibold leading-none text-[#102019] transition-colors hover:border-[#8aefc8] hover:bg-[#8aefc8]";
 const IDENTITY_ORIENTATION = Object.freeze({ x: 0, y: 0, z: 0, w: 1 });
@@ -32,13 +38,19 @@ const AXIS_VECTORS = Object.freeze({
   y: Object.freeze({ x: 0, y: -1, z: 0 }),
   z: Object.freeze({ x: 0, y: 0, z: 1 }),
 });
+const ROTATION_AXES = Object.freeze({
+  x: Object.freeze({ x: 1, y: 0, z: 0 }),
+  y: Object.freeze({ x: 0, y: 1, z: 0 }),
+  z: Object.freeze({ x: 0, y: 0, z: 1 }),
+});
 
 function wrapAngle(angle) {
   return ((angle + 180) % 360 + 360) % 360 - 180;
 }
 
 function normalizeQuaternion(quaternion) {
-  const length = Math.hypot(quaternion.x, quaternion.y, quaternion.z, quaternion.w) || 1;
+  const length = Math.hypot(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+  if (!Number.isFinite(length) || length < 0.00000001) return { ...IDENTITY_ORIENTATION };
   return {
     x: quaternion.x / length,
     y: quaternion.y / length,
@@ -108,6 +120,29 @@ function quaternionMatrix(quaternion) {
     2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y), 0,
     0, 0, 0, 1,
   ].join(",")})`;
+}
+
+function quaternionFromEuler({ x, y, z }) {
+  return multiplyQuaternions(
+    axisAngleQuaternion(ROTATION_AXES.z, z),
+    multiplyQuaternions(
+      axisAngleQuaternion(ROTATION_AXES.y, y),
+      axisAngleQuaternion(ROTATION_AXES.x, x),
+    ),
+  );
+}
+
+function quaternionToEuler(quaternion) {
+  const { x, y, z, w } = normalizeQuaternion(quaternion);
+  const pitchX = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
+  const sinY = Math.max(-1, Math.min(1, 2 * (w * y - z * x)));
+  const yawY = Math.asin(sinY);
+  const rollZ = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+  return {
+    x: wrapAngle(pitchX * 180 / Math.PI),
+    y: wrapAngle(yawY * 180 / Math.PI),
+    z: wrapAngle(rollZ * 180 / Math.PI),
+  };
 }
 
 function explosionDepth(control) {
@@ -182,6 +217,10 @@ function handleRangeKey(event, value, min, max, onChange) {
   onChange(Math.max(min, Math.min(max, value + direction * step)));
 }
 
+function nextPaint() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
 function spatialWeight(element, computed) {
   if (element.hasAttribute("data-toretto-root")) return 0;
   const structuralWeight = element.dataset.component || SURFACE_TAGS.has(element.tagName)
@@ -241,6 +280,42 @@ function RangeValueInput({ value, onCommit, label, min = -1000, max = 1000 }) {
   );
 }
 
+function DecimalValueInput({ value, onCommit, label }) {
+  const formattedValue = Number(value.toFixed(4));
+  const [draft, setDraft] = useState(String(formattedValue));
+
+  useEffect(() => setDraft(String(formattedValue)), [formattedValue]);
+
+  const commit = () => {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(formattedValue));
+      return;
+    }
+    onCommit(parsed);
+  };
+
+  return (
+    <input
+      className="spatializer-orientation-input"
+      type="number"
+      step="0.0001"
+      value={draft}
+      aria-label={label}
+      onChange={(event) => setDraft(event.currentTarget.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(String(formattedValue));
+          event.preventDefault();
+        }
+      }}
+    />
+  );
+}
+
 export function Spatializer({ children, contentKey, onOpenSource }) {
   const rootRef = useRef(null);
   const cameraRef = useRef(null);
@@ -248,6 +323,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const nodesRef = useRef([]);
   const dragRef = useRef(null);
   const gizmoDragRef = useRef(null);
+  const rangeDragRef = useRef(null);
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const resizeRef = useRef(null);
@@ -257,16 +333,16 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const exportUrlRef = useRef("");
   const exportPreviewUrlsRef = useRef([]);
   const previewGenerationRef = useRef(0);
+  const framingOperationRef = useRef(0);
   const explosionRef = useRef(0);
   const explosionPositionRef = useRef(0);
   const [explosionPosition, setExplosionPosition] = useState(0);
   const [perspective, setPerspective] = useState(LENS_DEFAULT);
   const [mode, setMode] = useState("orbit");
   const [orientation, setOrientation] = useState(IDENTITY_ORIENTATION);
-  const [pitch, setPitch] = useState(0);
-  const [yaw, setYaw] = useState(0);
-  const [roll, setRoll] = useState(0);
-  const [tumble, setTumble] = useState(0);
+  const [orientationInspectorOpen, setOrientationInspectorOpen] = useState(false);
+  const [orientationStatus, setOrientationStatus] = useState("");
+  const [isFraming, setIsFraming] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(0.7);
@@ -291,7 +367,13 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   panRef.current = pan;
   zoomRef.current = zoom;
 
+  const cancelFraming = useCallback(() => {
+    framingOperationRef.current += 1;
+    setIsFraming(false);
+  }, []);
+
   const applyExplosionPosition = useCallback((nextPosition, immediate = false) => {
+    cancelFraming();
     const next = Math.max(EXPLOSION_CONTROL_MIN, Math.min(EXPLOSION_CONTROL_MAX, nextPosition));
     const previous = explosionPositionRef.current;
     const shouldSnap = immediate || (Math.abs(previous) <= 1 && Math.abs(next) <= 1);
@@ -299,21 +381,140 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     setIsExplosionImmediate(shouldSnap);
     if (next === 0 && previous !== 0 && !shouldSnap) {
       setIsSettlingFlat(true);
-      flattenTimerRef.current = window.setTimeout(() => setIsSettlingFlat(false), 420);
+      flattenTimerRef.current = window.setTimeout(
+        () => setIsSettlingFlat(false),
+        EXPLOSION_TRANSITION_MS + FLAT_SETTLE_BUFFER_MS,
+      );
     } else {
       setIsSettlingFlat(false);
     }
     explosionPositionRef.current = next;
     setExplosionPosition(next);
-  }, []);
+  }, [cancelFraming]);
 
-  const fitView = useCallback(() => {
+  const fitBaseView = useCallback(() => {
     const camera = cameraRef.current;
     if (!camera || camera.hasAttribute("data-export-scene")) return;
+    cancelFraming();
     const next = Math.min((camera.clientWidth - 24) / APP_WIDTH, (camera.clientHeight - 24) / APP_HEIGHT);
+    zoomRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
     setFitScale(Math.max(0.2, next));
     setZoom(1);
     setPan({ x: 0, y: 0 });
+  }, [cancelFraming]);
+
+  const centerView = useCallback(async () => {
+    const camera = cameraRef.current;
+    if (!camera || camera.hasAttribute("data-export-scene")) return;
+    const operation = framingOperationRef.current + 1;
+    framingOperationRef.current = operation;
+    setIsFraming(true);
+    try {
+      for (let pass = 0; pass < FIT_MAX_PASSES; pass += 1) {
+        await nextPaint();
+        if (operation !== framingOperationRef.current
+          || camera !== cameraRef.current
+          || camera.hasAttribute("data-export-scene")) return;
+        const viewport = specimenRef.current;
+        if (!viewport) return;
+        const cameraRect = camera.getBoundingClientRect();
+        const viewportRect = viewport.getBoundingClientRect();
+        if (!(viewportRect.width > 0 && viewportRect.height > 0)) return;
+        const deltaX = (cameraRect.left + cameraRect.right - viewportRect.left - viewportRect.right) / 2;
+        const deltaY = (cameraRect.top + cameraRect.bottom - viewportRect.top - viewportRect.bottom) / 2;
+        if (Math.abs(deltaX) < 0.75 && Math.abs(deltaY) < 0.75) break;
+        const nextPan = { x: panRef.current.x + deltaX, y: panRef.current.y + deltaY };
+        panRef.current = nextPan;
+        setPan(nextPan);
+      }
+    } finally {
+      if (operation === framingOperationRef.current) setIsFraming(false);
+    }
+  }, []);
+
+  const fitScene = useCallback(async () => {
+    const camera = cameraRef.current;
+    if (!camera || camera.hasAttribute("data-export-scene")) return;
+    const operation = framingOperationRef.current + 1;
+    framingOperationRef.current = operation;
+    setIsFraming(true);
+    try {
+      for (let pass = 0; pass < FIT_MAX_PASSES; pass += 1) {
+        await nextPaint();
+        if (operation !== framingOperationRef.current
+          || camera !== cameraRef.current
+          || camera.hasAttribute("data-export-scene")) return;
+        let bounds;
+        try {
+          bounds = measureProjectedSceneBounds(camera);
+        } catch {
+          return;
+        }
+        const availableWidth = Math.max(1, camera.clientWidth - FIT_MARGIN * 2);
+        const availableHeight = Math.max(1, camera.clientHeight - FIT_MARGIN * 2);
+        const rawRatio = Math.min(
+          availableWidth / (bounds.right - bounds.left),
+          availableHeight / (bounds.bottom - bounds.top),
+        );
+        if (!(rawRatio > 0 && Number.isFinite(rawRatio))) return;
+        const ratio = Math.max(0.05, Math.min(20, rawRatio));
+        const nextZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoomRef.current * ratio));
+        if (Math.abs(nextZoom - zoomRef.current) > 0.000001) {
+          zoomRef.current = nextZoom;
+          setZoom(nextZoom);
+          await nextPaint();
+          if (operation !== framingOperationRef.current) return;
+        }
+
+        bounds = measureProjectedSceneBounds(camera);
+        const errorX = (bounds.left + bounds.right) / 2 - camera.clientWidth / 2;
+        const errorY = (bounds.top + bounds.bottom) / 2 - camera.clientHeight / 2;
+        if (Math.abs(errorX) >= 0.5 || Math.abs(errorY) >= 0.5) {
+          const basePan = { ...panRef.current };
+          const probeDistance = 12;
+          const probePan = { x: basePan.x + probeDistance, y: basePan.y + probeDistance };
+          panRef.current = probePan;
+          setPan(probePan);
+          await nextPaint();
+          if (operation !== framingOperationRef.current) return;
+          const probeBounds = measureProjectedSceneBounds(camera);
+          const probeCenterX = (probeBounds.left + probeBounds.right) / 2;
+          const probeCenterY = (probeBounds.top + probeBounds.bottom) / 2;
+          const baseCenterX = (bounds.left + bounds.right) / 2;
+          const baseCenterY = (bounds.top + bounds.bottom) / 2;
+          const slopeX = (probeCenterX - baseCenterX) / probeDistance;
+          const slopeY = (probeCenterY - baseCenterY) / probeDistance;
+          const correctionX = Number.isFinite(slopeX) && Math.abs(slopeX) > 0.02
+            ? -errorX / slopeX
+            : -errorX;
+          const correctionY = Number.isFinite(slopeY) && Math.abs(slopeY) > 0.02
+            ? -errorY / slopeY
+            : -errorY;
+          const nextPan = {
+            x: basePan.x + Math.max(-camera.clientWidth * 2, Math.min(camera.clientWidth * 2, correctionX)),
+            y: basePan.y + Math.max(-camera.clientHeight * 2, Math.min(camera.clientHeight * 2, correctionY)),
+          };
+          panRef.current = nextPan;
+          setPan(nextPan);
+          await nextPaint();
+          if (operation !== framingOperationRef.current) return;
+        }
+
+        const finalBounds = measureProjectedSceneBounds(camera);
+        const finalRatio = Math.min(
+          availableWidth / (finalBounds.right - finalBounds.left),
+          availableHeight / (finalBounds.bottom - finalBounds.top),
+        );
+        const finalDeltaX = camera.clientWidth / 2 - (finalBounds.left + finalBounds.right) / 2;
+        const finalDeltaY = camera.clientHeight / 2 - (finalBounds.top + finalBounds.bottom) / 2;
+        if (Math.abs(Math.log(Math.max(finalRatio, 0.000001))) < 0.003
+          && Math.abs(finalDeltaX) < 0.5
+          && Math.abs(finalDeltaY) < 0.5) break;
+      }
+    } finally {
+      if (operation === framingOperationRef.current) setIsFraming(false);
+    }
   }, []);
 
   const updateNodeDepth = useCallback((amount) => {
@@ -413,20 +614,20 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   useEffect(() => {
     const camera = cameraRef.current;
     if (!camera) return undefined;
-    resizeRef.current = new ResizeObserver(fitView);
+    resizeRef.current = new ResizeObserver(fitBaseView);
     resizeRef.current.observe(camera);
-    fitView();
+    fitBaseView();
     return () => resizeRef.current?.disconnect();
-  }, [fitView]);
+  }, [fitBaseView]);
 
   useEffect(() => {
     const handleFullscreen = () => {
       setIsFullscreen(document.fullscreenElement === rootRef.current);
-      requestAnimationFrame(fitView);
+      requestAnimationFrame(fitBaseView);
     };
     document.addEventListener("fullscreenchange", handleFullscreen);
     return () => document.removeEventListener("fullscreenchange", handleFullscreen);
-  }, [fitView]);
+  }, [fitBaseView]);
 
   const flatten = () => {
     applyExplosionPosition(0);
@@ -435,12 +636,8 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const reset = () => {
     flatten();
     setPerspective(LENS_DEFAULT);
-    setPitch(0);
-    setYaw(0);
-    setRoll(0);
-    setTumble(0);
     setOrientation(IDENTITY_ORIENTATION);
-    fitView();
+    fitBaseView();
   };
 
   const toggleFullscreen = async () => {
@@ -562,8 +759,55 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     ), true);
   };
 
+  const updateRangeDrag = (event) => {
+    const drag = rangeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const usableWidth = Math.max(1, drag.rect.width - RANGE_THUMB_SIZE);
+    const centerX = event.clientX - drag.grabOffset;
+    const progress = Math.max(0, Math.min(1,
+      (centerX - drag.rect.left - RANGE_THUMB_SIZE / 2) / usableWidth,
+    ));
+    const rawValue = drag.min + progress * (drag.max - drag.min);
+    drag.onChange(outsideBipolarDeadzone(rawValue, drag.rect.width, drag.extent));
+  };
+
+  const beginRangeDrag = (event, value, min, max, extent, onChange) => {
+    if (event.button !== 0) return;
+    cancelFraming();
+    event.preventDefault();
+    event.currentTarget.focus({ preventScroll: true });
+    const rect = event.currentTarget.getBoundingClientRect();
+    const usableWidth = Math.max(1, rect.width - RANGE_THUMB_SIZE);
+    const progress = (value - min) / (max - min);
+    const thumbCenter = rect.left + RANGE_THUMB_SIZE / 2 + progress * usableWidth;
+    const pointerOffset = event.clientX - thumbCenter;
+    const grabbedThumb = Math.abs(pointerOffset) <= RANGE_THUMB_SIZE / 2 + 2;
+    rangeDragRef.current = {
+      pointerId: event.pointerId,
+      rect,
+      min,
+      max,
+      extent,
+      onChange,
+      grabOffset: grabbedThumb ? pointerOffset : 0,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    if (!grabbedThumb) updateRangeDrag(event);
+  };
+
+  const endRangeDrag = (event) => {
+    const drag = rangeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    rangeDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
   const beginDrag = (event) => {
     if (contentKey && event.button === 0 && event.target.closest?.("a[href]")) return;
+    cancelFraming();
     event.preventDefault();
     cameraRef.current?.focus({ preventScroll: true });
     dragRef.current = {
@@ -579,18 +823,29 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     if (!drag) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
-    const tumbleGesture = event.ctrlKey && drag.button === 0;
-    const rollGesture = !tumbleGesture && event.altKey && drag.button === 0;
+    const tumbleGesture = drag.button === 0
+      && (event.ctrlKey || (mode === "tumble" && !event.shiftKey && !event.altKey));
+    const rollGesture = !tumbleGesture && drag.button === 0
+      && (event.altKey || (mode === "roll" && !event.shiftKey));
     const panGesture = !tumbleGesture && !rollGesture
       && (mode === "pan" || event.shiftKey || drag.button === 1 || drag.button === 2);
     drag.x = event.clientX;
     drag.y = event.clientY;
-    if (tumbleGesture) setTumble((current) => wrapAngle(current - dy * 0.18));
+    if (tumbleGesture) setOrientation((current) => multiplyQuaternions(
+      current,
+      axisAngleQuaternion(ROTATION_AXES.x, -dy * 0.18),
+    ));
     else if (panGesture) setPan((current) => ({ x: current.x + dx, y: current.y + dy }));
-    else if (rollGesture) setRoll((current) => wrapAngle(current + dx * 0.24));
+    else if (rollGesture) setOrientation((current) => multiplyQuaternions(
+      axisAngleQuaternion(ROTATION_AXES.z, dx * 0.24),
+      current,
+    ));
     else {
-      setYaw((current) => wrapAngle(current + dx * 0.2));
-      setPitch((current) => wrapAngle(current - dy * 0.18));
+      const orbitDelta = multiplyQuaternions(
+        axisAngleQuaternion(ROTATION_AXES.x, -dy * 0.18),
+        axisAngleQuaternion(ROTATION_AXES.y, dx * 0.2),
+      );
+      setOrientation((current) => multiplyQuaternions(orbitDelta, current));
     }
   };
 
@@ -600,6 +855,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   };
 
   const beginGizmoDrag = (event, axis = null) => {
+    cancelFraming();
     event.preventDefault();
     event.stopPropagation();
     cameraRef.current?.focus({ preventScroll: true });
@@ -614,9 +870,8 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       centerX: gizmoRect ? gizmoRect.left + gizmoRect.width / 2 : event.clientX,
       centerY: gizmoRect ? gizmoRect.top + gizmoRect.height / 2 : event.clientY,
       radius: 30,
-      startSceneOrientation: sceneOrientation,
-      baseOrientation,
-      startAxis: axis ? rotateVector(sceneOrientation, AXIS_VECTORS[axis]) : null,
+      startSceneOrientation: orientation,
+      startAxis: axis ? rotateVector(orientation, AXIS_VECTORS[axis]) : null,
       rotationAxis: null,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -661,12 +916,21 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
         ? axisAngleQuaternion(drag.rotationAxis, baseAngle + (distance - 1) * 90)
         : quaternionBetween(drag.startAxis, desired);
       const targetSceneOrientation = multiplyQuaternions(delta, drag.startSceneOrientation);
-      setOrientation(multiplyQuaternions(targetSceneOrientation, invertQuaternion(drag.baseOrientation)));
-    } else if (event.ctrlKey) setTumble((current) => wrapAngle(current - dy * 0.18));
-    else if (event.altKey) setRoll((current) => wrapAngle(current + dx * 0.24));
+      setOrientation(targetSceneOrientation);
+    } else if (event.ctrlKey) setOrientation((current) => multiplyQuaternions(
+      current,
+      axisAngleQuaternion(ROTATION_AXES.x, -dy * 0.18),
+    ));
+    else if (event.altKey) setOrientation((current) => multiplyQuaternions(
+      axisAngleQuaternion(ROTATION_AXES.z, dx * 0.24),
+      current,
+    ));
     else {
-      setYaw((current) => wrapAngle(current + dx * 0.2));
-      setPitch((current) => wrapAngle(current - dy * 0.18));
+      const orbitDelta = multiplyQuaternions(
+        axisAngleQuaternion(ROTATION_AXES.x, -dy * 0.18),
+        axisAngleQuaternion(ROTATION_AXES.y, dx * 0.2),
+      );
+      setOrientation((current) => multiplyQuaternions(orbitDelta, current));
     }
   };
 
@@ -681,22 +945,55 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   };
 
   const setAxisView = (axis) => {
-    setOrientation(IDENTITY_ORIENTATION);
-    setRoll(0);
-    setTumble(0);
     if (axis === "x") {
-      setPitch(0);
-      setYaw(-90);
+      setOrientation(quaternionFromEuler({ x: 0, y: -90, z: 0 }));
     } else if (axis === "y") {
-      setPitch(90);
-      setYaw(0);
+      setOrientation(quaternionFromEuler({ x: 90, y: 0, z: 0 }));
     } else {
-      setPitch(0);
-      setYaw(0);
+      setOrientation(IDENTITY_ORIENTATION);
+    }
+  };
+
+  const setEulerAxis = (axis, value) => {
+    const current = quaternionToEuler(orientation);
+    setOrientation(quaternionFromEuler({ ...current, [axis]: value }));
+  };
+
+  const setQuaternionComponent = (component, value) => {
+    setOrientation((current) => normalizeQuaternion({ ...current, [component]: value }));
+  };
+
+  const copyOrientation = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(orientation));
+      setOrientationStatus("Quaternion copied");
+    } catch {
+      setOrientationStatus("Copy unavailable");
+    }
+  };
+
+  const pasteOrientation = async () => {
+    try {
+      const raw = await navigator.clipboard.readText();
+      let values;
+      try {
+        const parsed = JSON.parse(raw);
+        values = [parsed.x, parsed.y, parsed.z, parsed.w];
+      } catch {
+        values = raw.trim().split(/[\s,]+/).map(Number);
+      }
+      if (values.length !== 4 || values.some((value) => !Number.isFinite(Number(value)))) {
+        throw new Error("Invalid quaternion");
+      }
+      setOrientation(normalizeQuaternion({ x: Number(values[0]), y: Number(values[1]), z: Number(values[2]), w: Number(values[3]) }));
+      setOrientationStatus("Quaternion pasted");
+    } catch {
+      setOrientationStatus("Paste four quaternion values");
     }
   };
 
   const handleWheel = (event) => {
+    cancelFraming();
     event.preventDefault();
     if (event.shiftKey) {
       const nextPan = { x: panRef.current.x - event.deltaY, y: panRef.current.y };
@@ -741,8 +1038,14 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     if (event.key === "ArrowRight") setPan((current) => ({ ...current, x: current.x + panStep }));
     if (event.key === "ArrowUp") setPan((current) => ({ ...current, y: current.y - panStep }));
     if (event.key === "ArrowDown") setPan((current) => ({ ...current, y: current.y + panStep }));
-    if (event.key.toLowerCase() === "q") setRoll((current) => wrapAngle(current - 8));
-    if (event.key.toLowerCase() === "e") setRoll((current) => wrapAngle(current + 8));
+    if (event.key.toLowerCase() === "q") setOrientation((current) => multiplyQuaternions(
+      axisAngleQuaternion(ROTATION_AXES.z, -8),
+      current,
+    ));
+    if (event.key.toLowerCase() === "e") setOrientation((current) => multiplyQuaternions(
+      axisAngleQuaternion(ROTATION_AXES.z, 8),
+      current,
+    ));
     if (event.key === "+" || event.key === "=") setZoom((current) => Math.min(ZOOM_MAX, current * 1.12));
     if (event.key === "-") setZoom((current) => Math.max(ZOOM_MIN, current / 1.12));
   };
@@ -751,21 +1054,11 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   // choice through zoom, pan, and Fit rather than changing as the stack grows.
   const worldScale = fitScale;
   const cameraTransform = `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`;
-  const baseOrientation = multiplyQuaternions(
-    axisAngleQuaternion(AXIS_VECTORS.z, roll),
-    multiplyQuaternions(
-      axisAngleQuaternion(AXIS_VECTORS.x, pitch),
-      multiplyQuaternions(
-        axisAngleQuaternion({ x: 0, y: 1, z: 0 }, yaw),
-        axisAngleQuaternion(AXIS_VECTORS.x, tumble),
-      ),
-    ),
-  );
-  const sceneOrientation = multiplyQuaternions(orientation, baseOrientation);
-  const worldTransform = `${quaternionMatrix(sceneOrientation)} scale(${worldScale})`;
-  const gizmoTransform = quaternionMatrix(sceneOrientation);
-  const gizmoInverseTransform = quaternionMatrix(invertQuaternion(sceneOrientation));
-  const effectiveMode = isControlHeld ? "tumble" : isAltHeld ? "roll" : mode === "pan" || isShiftHeld ? "pan" : "orbit";
+  const worldTransform = `${quaternionMatrix(orientation)} scale(${worldScale})`;
+  const gizmoTransform = quaternionMatrix(orientation);
+  const gizmoInverseTransform = quaternionMatrix(invertQuaternion(orientation));
+  const orientationEuler = quaternionToEuler(orientation);
+  const effectiveMode = isControlHeld ? "tumble" : isAltHeld ? "roll" : isShiftHeld ? "pan" : mode;
   const exportPreviewFooter = pendingExport?.scope === "scene" ? (
     <>
       <label className="flex items-center gap-2 text-[10px] font-medium text-[#8e9a94]">
@@ -795,13 +1088,23 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       data-immediate-explosion={isExplosionImmediate ? "true" : "false"}
     >
       <header className="spatializer-toolbar" data-spatializer-ignore="">
-        <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
-          <div className="spatializer-brand"><span>TORETTO</span><small>{nodeCount} live DOM elements</small></div>
+        <div className="spatializer-primary-actions flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
+          <div className="spatializer-brand">
+            <img className="spatializer-brand-mark" src={torettoMarkUrl} alt="" aria-hidden="true" />
+            <span className="spatializer-brand-copy"><strong>TORETTO</strong><small>{nodeCount} live DOM elements</small></span>
+          </div>
           <button type="button" className={SOURCE_BUTTON} onClick={onOpenSource}>Open…</button>
           <button type="button" className={`${TOOLBAR_BUTTON} text-[#c7f4e2]`} onClick={() => void openExport()}>Export…</button>
         </div>
-        <div className="spatializer-range spatializer-bipolar">
-          <span>Explosion <RangeValueInput value={explosionPosition} label="Explosion value" onCommit={applyExplosionPosition} /></span>
+        <div className="spatializer-controls">
+          <div className="spatializer-range spatializer-bipolar">
+          <span>
+            Explosion
+            <span className="spatializer-zero-group inline-flex h-[18px] overflow-hidden rounded border border-white/10">
+              <RangeValueInput value={explosionPosition} label="Explosion value" onCommit={applyExplosionPosition} />
+              <button type="button" className="h-full cursor-pointer border-s border-white/10 bg-white/[0.035] px-1.5 text-[8px] font-semibold leading-none text-[#9ca5a3] hover:bg-white/[0.07] hover:text-[#f2f5f4]" onClick={flatten} aria-label="Set Explosion to zero">Zero</button>
+            </span>
+          </span>
           <input
             type="range"
             min={EXPLOSION_CONTROL_MIN}
@@ -819,10 +1122,27 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               applyExplosionPosition,
             )}
             onInput={handleExplosionInput}
+            onPointerDown={(event) => beginRangeDrag(
+              event,
+              explosionPosition,
+              EXPLOSION_CONTROL_MIN,
+              EXPLOSION_CONTROL_MAX,
+              EXPLOSION_CONTROL_MAX,
+              (value) => applyExplosionPosition(value, true),
+            )}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={endRangeDrag}
+            onPointerCancel={endRangeDrag}
           />
-        </div>
-        <div className="spatializer-range spatializer-lens spatializer-bipolar">
-          <span>Perspective <RangeValueInput value={lensControl(perspective)} label="Perspective value" min={LENS_CONTROL_MIN} max={LENS_CONTROL_MAX} onCommit={(value) => setPerspective(lensFromControl(value))} /></span>
+          </div>
+          <div className="spatializer-range spatializer-lens spatializer-bipolar">
+          <span>
+            Perspective
+            <span className="spatializer-zero-group inline-flex h-[18px] overflow-hidden rounded border border-white/10">
+              <RangeValueInput value={lensControl(perspective)} label="Perspective value" min={LENS_CONTROL_MIN} max={LENS_CONTROL_MAX} onCommit={(value) => setPerspective(lensFromControl(value))} />
+              <button type="button" className="h-full cursor-pointer border-s border-white/10 bg-white/[0.035] px-1.5 text-[8px] font-semibold leading-none text-[#9ca5a3] hover:bg-white/[0.07] hover:text-[#f2f5f4]" onClick={() => setPerspective(LENS_DEFAULT)} aria-label="Set Perspective to zero">Zero</button>
+            </span>
+          </span>
           <input
             type="range"
             min={LENS_CONTROL_MIN}
@@ -846,14 +1166,34 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
                 LENS_CONTROL_MAX,
               ),
             ))}
+            onPointerDown={(event) => beginRangeDrag(
+              event,
+              lensControl(perspective),
+              LENS_CONTROL_MIN,
+              LENS_CONTROL_MAX,
+              LENS_CONTROL_MAX,
+              (value) => setPerspective(lensFromControl(value)),
+            )}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={endRangeDrag}
+            onPointerCancel={endRangeDrag}
           />
-        </div>
-        <div className="spatializer-range spatializer-zoom spatializer-bipolar">
-          <span>Zoom <RangeValueInput value={zoomControl(zoom)} label="Zoom value" min={ZOOM_CONTROL_MIN} max={ZOOM_CONTROL_MAX} onCommit={(value) => {
-            const nextZoom = zoomFromControl(value);
-            zoomRef.current = nextZoom;
-            setZoom(nextZoom);
-          }} /></span>
+          </div>
+          <div className="spatializer-range spatializer-zoom spatializer-bipolar">
+          <span>
+            Zoom
+            <span className="spatializer-zero-group inline-flex h-[18px] overflow-hidden rounded border border-white/10">
+              <RangeValueInput value={zoomControl(zoom)} label="Zoom value" min={ZOOM_CONTROL_MIN} max={ZOOM_CONTROL_MAX} onCommit={(value) => {
+                const nextZoom = zoomFromControl(value);
+                zoomRef.current = nextZoom;
+                setZoom(nextZoom);
+              }} />
+              <button type="button" className="h-full cursor-pointer border-s border-white/10 bg-white/[0.035] px-1.5 text-[8px] font-semibold leading-none text-[#9ca5a3] hover:bg-white/[0.07] hover:text-[#f2f5f4]" onClick={() => {
+                zoomRef.current = 1;
+                setZoom(1);
+              }} aria-label="Set Zoom to zero">Zero</button>
+            </span>
+          </span>
           <input
             type="range"
             min={ZOOM_CONTROL_MIN}
@@ -885,16 +1225,27 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               zoomRef.current = nextZoom;
               setZoom(nextZoom);
             }}
+            onPointerDown={(event) => beginRangeDrag(
+              event,
+              zoomControl(zoom),
+              ZOOM_CONTROL_MIN,
+              ZOOM_CONTROL_MAX,
+              ZOOM_CONTROL_MAX,
+              (value) => {
+                const nextZoom = zoomFromControl(value);
+                zoomRef.current = nextZoom;
+                setZoom(nextZoom);
+              },
+            )}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={endRangeDrag}
+            onPointerCancel={endRangeDrag}
           />
-        </div>
-        <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
-          <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
-            <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
-            <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setOrientation(IDENTITY_ORIENTATION); setPitch(3); setYaw(-28); setRoll(0); setTumble(0); }}>Isometric</button>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
+        </div>
+        <div className="spatializer-actions flex flex-nowrap gap-1 border-s border-white/10 ps-4">
+          <button type="button" className={`${TOOLBAR_BUTTON} disabled:cursor-wait disabled:opacity-45`} disabled={isFraming} onClick={() => void centerView()}>Center</button>
+          <button type="button" className={`${TOOLBAR_BUTTON} disabled:cursor-wait disabled:opacity-45`} disabled={isFraming} onClick={() => void fitScene()}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={reset}>Reset</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={() => void toggleFullscreen()}>{isFullscreen ? "Exit full screen" : "Full screen"}</button>
         </div>
@@ -921,6 +1272,55 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
             </div>
           </div>
         </div>
+        {orientationInspectorOpen && (
+          <section
+            className="spatializer-orientation-inspector"
+            data-spatializer-ignore=""
+            data-export-ignore=""
+            aria-label="Orientation inspector"
+            onPointerDown={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <header className="flex items-center justify-between border-b border-white/10 px-3 py-2">
+              <div className="grid gap-0.5">
+                <strong className="text-[10px] font-semibold text-[#e6eeea]">Orientation</strong>
+                <span className="font-mono text-[8px] text-[#6f7b75]">XYZ · degrees</span>
+              </div>
+              <button type="button" className="h-5 w-5 cursor-pointer rounded text-sm leading-none text-[#78847e] hover:bg-white/[0.06] hover:text-white" onClick={() => setOrientationInspectorOpen(false)} aria-label="Close orientation inspector">×</button>
+            </header>
+            <div className="grid gap-3 p-3">
+              <div className="grid grid-cols-3 gap-2">
+                {(["x", "y", "z"]).map((axis) => (
+                  <label className="grid gap-1 font-mono text-[8px] font-semibold uppercase text-[#7f8b85]" key={axis}>
+                    <span>{axis}</span>
+                    <RangeValueInput value={Math.round(orientationEuler[axis])} label={`${axis.toUpperCase()} rotation in degrees`} min={-180} max={180} onCommit={(value) => setEulerAxis(axis, value)} />
+                  </label>
+                ))}
+              </div>
+              <button type="button" className="h-7 rounded-md border border-white/10 bg-white/[0.035] text-[9px] font-medium text-[#9ca5a3] hover:bg-white/[0.07] hover:text-white" onClick={() => setOrientation(IDENTITY_ORIENTATION)}>Zero rotation</button>
+              <details className="group border-t border-white/10 pt-2">
+                <summary className="cursor-pointer list-none font-mono text-[8px] font-semibold uppercase tracking-[0.08em] text-[#78847e] hover:text-[#b6c1bc]">Advanced quaternion</summary>
+                <div className="mt-2 grid gap-2">
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {(["x", "y", "z", "w"]).map((component) => (
+                      <label className="grid gap-1 font-mono text-[8px] font-semibold uppercase text-[#6f7b75]" key={component}>
+                        <span>{component}</span>
+                        <DecimalValueInput value={orientation[component]} label={`Quaternion ${component.toUpperCase()}`} onCommit={(value) => setQuaternionComponent(component, value)} />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button type="button" className="h-6 rounded border border-white/10 text-[8px] text-[#87918c] hover:bg-white/[0.06] hover:text-white" onClick={() => setOrientation((current) => normalizeQuaternion(current))}>Normalize</button>
+                    <button type="button" className="h-6 rounded border border-white/10 text-[8px] text-[#87918c] hover:bg-white/[0.06] hover:text-white" onClick={() => void copyOrientation()}>Copy</button>
+                    <button type="button" className="h-6 rounded border border-white/10 text-[8px] text-[#87918c] hover:bg-white/[0.06] hover:text-white" onClick={() => void pasteOrientation()}>Paste</button>
+                  </div>
+                  {orientationStatus && <span className="font-mono text-[8px] text-[#66e4b3]" role="status">{orientationStatus}</span>}
+                </div>
+              </details>
+            </div>
+          </section>
+        )}
         <div className="spatializer-gizmo" data-spatializer-ignore="" data-export-ignore="" aria-label="Scene orientation">
           <div className="spatializer-gizmo-rotor" style={{ transform: gizmoTransform }}>
             <span className="spatializer-gizmo-axis axis-x" aria-hidden="true" />
@@ -951,6 +1351,28 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               onPointerCancel={endGizmoDrag}
             />
           </div>
+          <button
+            type="button"
+            className="spatializer-gizmo-inspector-button"
+            aria-label="Edit orientation values"
+            aria-expanded={orientationInspectorOpen}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setOrientationInspectorOpen((current) => !current)}
+          >XYZ</button>
+        </div>
+        <div
+          className="spatializer-gizmo-modes inline-flex overflow-hidden rounded-md border border-white/10"
+          role="group"
+          aria-label="Navigation mode"
+          data-spatializer-ignore=""
+          data-export-ignore=""
+          onPointerDown={(event) => event.stopPropagation()}
+          onWheel={(event) => event.stopPropagation()}
+        >
+          <button type="button" className={`${MODE_BUTTON} ${effectiveMode === "orbit" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "orbit"} onClick={() => setMode("orbit")}>Orbit</button>
+          <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
+          <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "tumble" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "tumble"} onClick={() => setMode("tumble")}>Tumble</button>
+          <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "roll" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "roll"} onClick={() => setMode("roll")}>Roll</button>
         </div>
         <div className="spatializer-hint" data-spatializer-ignore="" data-export-ignore="">
           {contentKey
@@ -958,9 +1380,13 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
             : effectiveMode === "orbit"
             ? "Drag to orbit · Shift: pan · Control: tumble · Option: roll"
             : effectiveMode === "tumble"
-              ? `Control-drag vertically to tumble · Release Control to ${mode}`
+              ? mode === "tumble" && !isControlHeld
+                ? "Drag vertically to tumble · Shift: pan · Option: roll"
+                : `Control-drag vertically to tumble · Release Control to ${mode}`
             : effectiveMode === "roll"
-              ? `Option-drag horizontally to roll · Release Option to ${mode}`
+              ? mode === "roll" && !isAltHeld
+                ? "Drag horizontally to roll · Shift: pan · Control: tumble"
+                : `Option-drag horizontally to roll · Release Option to ${mode}`
             : mode === "pan"
               ? "Drag to pan · Wheel to zoom"
               : "Release Shift to orbit · Wheel to zoom"}

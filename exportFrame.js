@@ -53,7 +53,7 @@ function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-function projectedSceneBounds(camera) {
+export function measureProjectedSceneBounds(camera) {
   const cameraRect = camera.getBoundingClientRect();
   const rectangles = [...camera.querySelectorAll(".spatializer-specimen [data-spatial-node]")]
     .map((element) => element.getBoundingClientRect())
@@ -74,7 +74,7 @@ function projectedSceneBounds(camera) {
 }
 
 function createSceneCapture(camera, padding) {
-  const bounds = projectedSceneBounds(camera);
+  const bounds = measureProjectedSceneBounds(camera);
   const width = Math.ceil(bounds.right - bounds.left + padding * 2);
   const height = Math.ceil(bounds.bottom - bounds.top + padding * 2);
   if (width > 100_000 || height > 100_000) {
