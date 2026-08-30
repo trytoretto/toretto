@@ -48,6 +48,13 @@ const FIT_MARGIN = 32;
 const FIT_MAX_PASSES = 10;
 const CAMERA_NEAR_CLIP_RATIO = 0.96;
 const DEFAULT_TIMELINE_DURATION = 5;
+const EASING_PRESETS = Object.freeze({
+  linear: Object.freeze({ label: "Linear", curve: Object.freeze([0, 0, 1, 1]) }),
+  ease: Object.freeze({ label: "Ease", curve: Object.freeze([0.25, 0.1, 0.25, 1]) }),
+  easeIn: Object.freeze({ label: "Ease in", curve: Object.freeze([0.42, 0, 1, 1]) }),
+  easeOut: Object.freeze({ label: "Ease out", curve: Object.freeze([0, 0, 0.58, 1]) }),
+  easeInOut: Object.freeze({ label: "Ease in/out", curve: Object.freeze([0.42, 0, 0.58, 1]) }),
+});
 const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTICLE", "BUTTON", "DIALOG"]);
 const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const TOOLBAR_ACTIVE = "relative z-[1] !bg-[#66e4b3]/10 !text-[#dff9ee]";
@@ -260,12 +267,38 @@ function interpolateValue(from, to, progress) {
   return progress < 0.5 ? from : to;
 }
 
+function cubicBezierCoordinate(t, first, second) {
+  const inverse = 1 - t;
+  return 3 * inverse * inverse * t * first + 3 * inverse * t * t * second + t * t * t;
+}
+
+function cubicBezierDerivative(t, first, second) {
+  const inverse = 1 - t;
+  return 3 * inverse * inverse * first
+    + 6 * inverse * t * (second - first)
+    + 3 * t * t * (1 - second);
+}
+
+function easedProgress(progress, easing = "linear", storedCurve = null) {
+  if (progress <= 0 || progress >= 1 || easing === "linear") return progress;
+  const [x1, y1, x2, y2] = storedCurve || EASING_PRESETS[easing]?.curve || EASING_PRESETS.linear.curve;
+  let parameter = progress;
+  for (let iteration = 0; iteration < 7; iteration += 1) {
+    const error = cubicBezierCoordinate(parameter, x1, x2) - progress;
+    const derivative = cubicBezierDerivative(parameter, x1, x2);
+    if (Math.abs(error) < 0.00001 || Math.abs(derivative) < 0.00001) break;
+    parameter = Math.max(0, Math.min(1, parameter - error / derivative));
+  }
+  return cubicBezierCoordinate(parameter, y1, y2);
+}
+
 function evaluateKeyframes(keyframes, time) {
   if (!keyframes.length) return null;
   const before = [...keyframes].reverse().find((frame) => frame.time <= time) || keyframes[0];
   const after = keyframes.find((frame) => frame.time >= time) || keyframes[keyframes.length - 1];
   if (before === after || after.time === before.time) return before.state;
-  const progress = Math.max(0, Math.min(1, (time - before.time) / (after.time - before.time)));
+  const linearProgress = Math.max(0, Math.min(1, (time - before.time) / (after.time - before.time)));
+  const progress = easedProgress(linearProgress, before.easing, before.curve);
   const state = interpolateValue(before.state, after.state, progress);
   state.orientation = normalizeQuaternion(state.orientation);
   return state;
@@ -429,6 +462,82 @@ function TimelineValueInput({ value, onCommit, label, min, max, step }) {
   />;
 }
 
+function CurveSwatch({ curve, className = "" }) {
+  const [x1, y1, x2, y2] = curve;
+  return <svg className={className} viewBox="0 0 48 24" aria-hidden="true">
+    <path d="M3 21H45M3 21V3" className="spatializer-curve-grid" />
+    <path d={`M3 21 C ${3 + x1 * 42} ${21 - y1 * 18}, ${3 + x2 * 42} ${21 - y2 * 18}, 45 3`} className="spatializer-curve-path" />
+  </svg>;
+}
+
+function CurveEditor({ curve, onChange, onPreset, onClose }) {
+  const [activeHandle, setActiveHandle] = useState(null);
+  const width = 164;
+  const height = 104;
+  const padding = 14;
+  const innerWidth = width - padding * 2;
+  const innerHeight = height - padding * 2;
+  const point = (index) => ({
+    x: padding + curve[index * 2] * innerWidth,
+    y: height - padding - curve[index * 2 + 1] * innerHeight,
+  });
+  const first = point(0);
+  const second = point(1);
+  const updateHandle = (event) => {
+    if (activeHandle === null) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - rect.left - padding) / innerWidth));
+    const y = Math.max(0, Math.min(1, 1 - (event.clientY - rect.top - padding) / innerHeight));
+    const next = [...curve];
+    next[activeHandle * 2] = Number(x.toFixed(3));
+    next[activeHandle * 2 + 1] = Number(y.toFixed(3));
+    onChange(next);
+  };
+  const updateValue = (index, value) => {
+    const next = [...curve];
+    next[index] = Math.max(0, Math.min(1, Number(value) || 0));
+    onChange(next);
+  };
+
+  return <div className="spatializer-curve-editor" role="dialog" aria-label="Cubic Bézier curve editor">
+    <header><strong>Segment curve</strong><button type="button" onClick={onClose} aria-label="Close curve editor">×</button></header>
+    <div className="spatializer-curve-presets">
+      {Object.entries(EASING_PRESETS).map(([value, preset]) => <button type="button" key={value} onClick={() => onPreset(value)} aria-label={`Use ${preset.label} curve`} title={preset.label}>
+        <CurveSwatch curve={preset.curve} />
+      </button>)}
+    </div>
+    <svg
+      className="spatializer-curve-canvas"
+      viewBox={`0 0 ${width} ${height}`}
+      onPointerMove={updateHandle}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        setActiveHandle(null);
+      }}
+      onPointerCancel={() => setActiveHandle(null)}
+    >
+      <path d={`M${padding} ${height - padding}H${width - padding}M${padding} ${height - padding}V${padding}`} className="spatializer-curve-grid" />
+      <path d={`M${padding} ${height - padding}L${first.x} ${first.y}M${width - padding} ${padding}L${second.x} ${second.y}`} className="spatializer-curve-handles" />
+      <path d={`M${padding} ${height - padding} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${width - padding} ${padding}`} className="spatializer-curve-path" />
+      {[first, second].map((handle, index) => <circle
+        key={index}
+        cx={handle.x}
+        cy={handle.y}
+        r="5"
+        className="spatializer-curve-handle"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.ownerSVGElement.setPointerCapture(event.pointerId);
+          setActiveHandle(index);
+        }}
+      />)}
+    </svg>
+    <div className="spatializer-curve-values">
+      {curve.map((value, index) => <label key={index}><span>{index < 2 ? `${index === 0 ? "x" : "y"}1` : `${index === 2 ? "x" : "y"}2`}</span><input type="number" min="0" max="1" step="0.01" value={Number(value.toFixed(3))} onChange={(event) => updateValue(index, event.currentTarget.value)} /></label>)}
+    </div>
+  </div>;
+}
+
 export function Spatializer({ children, contentKey, onOpenSource }) {
   const rootRef = useRef(null);
   const cameraRef = useRef(null);
@@ -470,6 +579,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [keyframes, setKeyframes] = useState([]);
   const [selectedKeyframeId, setSelectedKeyframeId] = useState("baseline");
   const [keyframeDragPreview, setKeyframeDragPreview] = useState(null);
+  const [curveEditorOpen, setCurveEditorOpen] = useState(false);
   const [mode, setMode] = useState("orbit");
   const [orientation, setOrientation] = useState(IDENTITY_ORIENTATION);
   const [orientationInspectorOpen, setOrientationInspectorOpen] = useState(false);
@@ -888,7 +998,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     const currentState = captureAnimationState();
     setKeyframes((current) => {
       const baseline = current.find((frame) => frame.id === "baseline" || frame.time === 0);
-      if (!baseline) return [{ id: "baseline", time: 0, state: currentState }, ...current];
+      if (!baseline) return [{ id: "baseline", time: 0, state: currentState, easing: "linear" }, ...current];
       const editingBaseline = selectedKeyframeId === "baseline"
         || (!selectedKeyframeId && playhead <= 0.001);
       const editingSelectedFrame = current.some((frame) => (
@@ -926,6 +1036,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       id: existing?.id || `keyframe-${++keyframeIdRef.current}`,
       time,
       state: captureAnimationState(),
+      easing: existing?.easing || "linear",
     };
     setKeyframes((current) => [
       ...current.filter((candidate) => Math.abs(candidate.time - frame.time) > 0.001),
@@ -1522,6 +1633,10 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     ...current,
     [group]: { ...current[group], [axis]: value },
   }));
+  const selectedKeyframe = keyframes.find((frame) => frame.id === selectedKeyframeId);
+  const selectedCurve = selectedKeyframe?.curve
+    || EASING_PRESETS[selectedKeyframe?.easing]?.curve
+    || EASING_PRESETS.linear.curve;
   const perspectiveOrigin = `${50 + vanishingPoint.x * VANISHING_ORIGIN_RANGE / VANISHING_CONTROL_MAX}% ${50 + vanishingPoint.y * VANISHING_ORIGIN_RANGE / VANISHING_CONTROL_MAX}%`;
   const renderInspectorRange = ({
     label,
@@ -2100,6 +2215,53 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               if (next) seekTimeline(next.time, next.id);
             }}>Next</button>
             <button type="button" disabled={!selectedKeyframeId || selectedKeyframeId === "baseline"} onClick={deleteSelectedKeyframe}>Delete</button>
+            <div className="spatializer-timeline-easing">
+              <span>Curve</span>
+              <select
+                aria-label="Selected keyframe easing"
+                value={selectedKeyframe?.easing || "linear"}
+                disabled={!selectedKeyframe}
+                onChange={(event) => {
+                  const easing = event.currentTarget.value;
+                  setKeyframes((current) => current.map((frame) => (
+                    frame.id === selectedKeyframeId
+                      ? {
+                        ...frame,
+                        easing,
+                        curve: easing === "custom"
+                          ? [...selectedCurve]
+                          : [...EASING_PRESETS[easing].curve],
+                      }
+                      : frame
+                  )));
+                }}
+              >
+                {Object.entries(EASING_PRESETS).map(([value, preset]) => (
+                  <option value={value} key={value}>{preset.label}</option>
+                ))}
+                <option value="custom">Custom</option>
+              </select>
+              <button
+                type="button"
+                className="spatializer-curve-swatch-button"
+                aria-label="Edit selected keyframe curve"
+                aria-expanded={curveEditorOpen}
+                disabled={!selectedKeyframe}
+                onClick={() => setCurveEditorOpen((current) => !current)}
+              ><CurveSwatch curve={selectedCurve} /></button>
+              {curveEditorOpen && selectedKeyframe && <CurveEditor
+                curve={selectedCurve}
+                onClose={() => setCurveEditorOpen(false)}
+                onPreset={(easing) => setKeyframes((current) => current.map((frame) => (
+                  frame.id === selectedKeyframeId
+                    ? { ...frame, easing, curve: [...EASING_PRESETS[easing].curve] }
+                    : frame
+                )))}
+                onChange={(curve) => setKeyframes((current) => current.map((frame) => (
+                  frame.id === selectedKeyframeId ? { ...frame, easing: "custom", curve } : frame
+                )))}
+              />}
+            </div>
             <div className="spatializer-timeline-time" aria-label="Timeline time">
               <TimelineValueInput value={playhead} min={0} max={timelineDuration} step={0.01} label="Playhead time in seconds" onCommit={seekTimeline} />
               <span>s /</span>
@@ -2115,7 +2277,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
             </div>
             <button type="button" disabled={keyframes.length <= 1} onClick={() => {
               setIsPlaying(false);
-              setKeyframes([{ id: "baseline", time: 0, state: captureAnimationState() }]);
+              setKeyframes([{ id: "baseline", time: 0, state: captureAnimationState(), easing: "linear" }]);
               setSelectedKeyframeId("baseline");
               setPlayhead(0);
             }}>Clear</button>
