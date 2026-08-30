@@ -721,6 +721,23 @@ button, input { font-family: inherit; }
 .spatializer-keyframe-markers button:hover { background: #ffd37f; }
 .spatializer-keyframe-markers button.is-selected { z-index: 2; box-shadow: 0 0 0 2px #0b0f0d, 0 0 0 4px rgba(102, 228, 179, .85); }
 .spatializer-keyframe-markers button.is-baseline { background: #66e4b3; }
+.spatializer-keyframe-drop-zone {
+  position: absolute;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  margin: -11px;
+  border: 1px solid rgba(102, 228, 179, .9);
+  border-radius: 5px;
+  background: rgba(102, 228, 179, .12);
+  box-shadow: 0 0 0 3px rgba(102, 228, 179, .08), 0 0 14px rgba(102, 228, 179, .38);
+  transform: rotate(45deg);
+  pointer-events: none;
+  animation: spatializer-keyframe-drop-pulse 700ms ease-in-out infinite alternate;
+}
+@keyframes spatializer-keyframe-drop-pulse {
+  to { background: rgba(102, 228, 179, .24); box-shadow: 0 0 0 5px rgba(102, 228, 179, .05), 0 0 18px rgba(102, 228, 179, .55); }
+}
 .spatializer-keyframe-drag-tooltip {
   position: absolute;
   inset-block-end: 17px;

@@ -1019,14 +1019,25 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
 
   const seekTimeline = useCallback((nextTime, keyframeId = null) => {
     const bounded = Math.max(0, Math.min(timelineDuration, nextTime));
+    const trackWidth = timelineMarkersRef.current?.getBoundingClientRect().width || 0;
+    const snapTolerance = trackWidth > 0 ? timelineDuration * 9 / trackWidth : 0.03;
+    const nearbyFrame = keyframeId
+      ? keyframes.find((frame) => frame.id === keyframeId)
+      : keyframes
+        .map((frame) => ({ frame, distance: Math.abs(frame.time - bounded) }))
+        .filter(({ distance }) => distance <= snapTolerance)
+        .sort((left, right) => left.distance - right.distance)[0]?.frame;
+    const resolvedTime = nearbyFrame?.time ?? bounded;
     setIsPlaying(false);
-    setSelectedKeyframeId(keyframeId);
-    setPlayhead(bounded);
-    applyAnimationState(evaluateKeyframes(keyframes, bounded));
+    setSelectedKeyframeId(nearbyFrame?.id || null);
+    setPlayhead(resolvedTime);
+    applyAnimationState(evaluateKeyframes(keyframes, resolvedTime));
   }, [applyAnimationState, keyframes, timelineDuration]);
 
   const addKeyframe = () => {
-    const time = Number(playhead.toFixed(3));
+    const currentTime = Number(playhead.toFixed(3));
+    const onlyBaseline = keyframes.length === 1 && keyframes[0].id === "baseline";
+    const time = currentTime <= 0.001 && onlyBaseline ? timelineDuration : currentTime;
     if (time <= 0.001) {
       setSelectedKeyframeId("baseline");
       return;
@@ -1043,6 +1054,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       frame,
     ].sort((left, right) => left.time - right.time));
     setSelectedKeyframeId(frame.id);
+    setPlayhead(time);
   };
 
   const deleteSelectedKeyframe = useCallback(() => {
@@ -1118,6 +1130,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const beginKeyframeDrag = useCallback((event, frame) => {
     event.preventDefault();
     event.stopPropagation();
+    event.currentTarget.focus({ preventScroll: true });
     setIsPlaying(false);
     setSelectedKeyframeId(frame.id);
     setKeyframeDragPreview(null);
@@ -1139,16 +1152,24 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     if (drag.moved) {
       const rect = timelineMarkersRef.current?.getBoundingClientRect();
       if (rect?.width) {
+        const previewTime = Math.max(0, Math.min(
+          timelineDuration,
+          (event.clientX - rect.left) / rect.width * timelineDuration,
+        ));
+        const collisionTolerance = Math.max(0.01, timelineDuration * 12 / rect.width);
+        const dropTarget = keyframes
+          .filter((frame) => frame.id !== drag.id)
+          .map((frame) => ({ frame, distance: Math.abs(frame.time - previewTime) }))
+          .filter(({ distance }) => distance <= collisionTolerance)
+          .sort((left, right) => left.distance - right.distance)[0]?.frame;
         setKeyframeDragPreview({
-          time: Math.max(0, Math.min(
-            timelineDuration,
-            (event.clientX - rect.left) / rect.width * timelineDuration,
-          )),
+          time: dropTarget?.time ?? previewTime,
+          dropTargetTime: dropTarget?.time ?? null,
         });
       }
       moveKeyframe(drag.id, event.clientX);
     }
-  }, [moveKeyframe, timelineDuration]);
+  }, [keyframes, moveKeyframe, timelineDuration]);
 
   const endKeyframeDrag = useCallback((event) => {
     if (!keyframeDragRef.current) return;
@@ -1168,8 +1189,15 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     playbackStartedRef.current = performance.now() - playhead * 1000;
     const tick = (now) => {
       const nextTime = Math.min(timelineDuration, (now - playbackStartedRef.current) / 1000);
+      const trackWidth = timelineMarkersRef.current?.getBoundingClientRect().width || 0;
+      const snapTolerance = trackWidth > 0 ? timelineDuration * 9 / trackWidth : 0.03;
+      const nearbyFrame = keyframes
+        .map((frame) => ({ frame, distance: Math.abs(frame.time - nextTime) }))
+        .filter(({ distance }) => distance <= snapTolerance)
+        .sort((left, right) => left.distance - right.distance)[0]?.frame;
       flushSync(() => {
         setPlayhead(nextTime);
+        setSelectedKeyframeId(nearbyFrame?.id || null);
         applyAnimationState(evaluateKeyframes(keyframes, nextTime));
       });
       if (nextTime >= timelineDuration) {
@@ -2285,6 +2313,11 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           <div className="spatializer-timeline-track">
             <input type="range" min="0" max={timelineDuration} step="0.001" value={playhead} aria-label="Timeline playhead" aria-valuetext={`${playhead.toFixed(2)} seconds`} onInput={(event) => seekTimeline(Number(event.currentTarget.value))} />
             <div className="spatializer-keyframe-markers" ref={timelineMarkersRef}>
+              {keyframeDragPreview?.dropTargetTime != null && <span
+                className="spatializer-keyframe-drop-zone"
+                style={{ insetInlineStart: `${keyframeDragPreview.dropTargetTime / timelineDuration * 100}%` }}
+                aria-hidden="true"
+              />}
               {keyframes.map((frame) => <button
                 type="button"
                 key={frame.id}
