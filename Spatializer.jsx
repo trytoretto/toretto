@@ -892,7 +892,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => applyExplosionPosition(explosionControl(1000))}>Explode ×10</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setOrientation(IDENTITY_ORIENTATION); setPitch(3); setYaw(-28); setRoll(0); setTumble(0); }}>Isometric</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
