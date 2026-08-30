@@ -99,7 +99,6 @@ button, input { font-family: inherit; }
 }
 
 .spatializer-specimen .imported-document a[href] { pointer-events: auto; cursor: pointer; }
-.spatializer-root[data-interaction-target="page"] .spatializer-specimen .imported-document { pointer-events: auto; }
 
 .spatializer-app-host > [data-toretto-root] { width: 100% !important; height: 100% !important; }
 

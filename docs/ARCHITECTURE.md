@@ -31,11 +31,10 @@ The extension adapter references live nodes. The studio adapter references sanit
 
 ## Interaction model
 
-Canvas navigation is the safe default. Page interaction is explicit so scrolling or clicking the loaded page does not accidentally move the camera.
+Canvas navigation is the safe default. Page scrolling requires a modifier so it does not accidentally move instead of the camera.
 
 - Canvas target: wheel zooms; Shift-wheel pans; drag uses Orbit/Pan; Option-drag rolls.
-- Page target: wheel scrolls the loaded page; links and supported controls receive pointer input.
-- ⌘/Ctrl temporarily routes the wheel to Page while Canvas remains selected.
+- ⌘/Ctrl-wheel scrolls the loaded page; links receive pointer input without changing wheel routing.
 - Links open in a new tab with `noopener noreferrer`.
 
 Viewport resizing must be implemented as an overlay and host-level emulation boundary. It must not wrap the spatial DOM in an overflow container, because CSS grouping properties such as `overflow: hidden` can flatten a `preserve-3d` subtree into one rectangle. In the extension, viewport emulation may require Chrome DevTools Protocol or a dedicated preview tab rather than mutation of the user's active page.

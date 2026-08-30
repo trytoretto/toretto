@@ -33,6 +33,8 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const specimenRef = useRef(null);
   const nodesRef = useRef([]);
   const dragRef = useRef(null);
+  const panRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(1);
   const resizeRef = useRef(null);
   const mutationFrameRef = useRef(0);
   const scrubTimerRef = useRef(0);
@@ -51,7 +53,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(0.7);
-  const [interactionTarget, setInteractionTarget] = useState("canvas");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isScrubbingExplosion, setIsScrubbingExplosion] = useState(false);
   const [isAltHeld, setIsAltHeld] = useState(false);
@@ -67,6 +68,8 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [didSaveExport, setDidSaveExport] = useState(false);
   const [nodeCount, setNodeCount] = useState(0);
   explosionRef.current = explosion;
+  panRef.current = pan;
+  zoomRef.current = zoom;
 
   const fitView = useCallback(() => {
     const camera = cameraRef.current;
@@ -149,8 +152,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   }, [indexDom]);
 
   useEffect(() => updateNodeDepth(explosion), [explosion, updateNodeDepth]);
-
-  useEffect(() => setInteractionTarget("canvas"), [contentKey]);
 
   useEffect(() => () => {
     window.clearTimeout(scrubTimerRef.current);
@@ -371,10 +372,12 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const handleWheel = (event) => {
     event.preventDefault();
     if (event.shiftKey) {
-      setPan((current) => ({ x: current.x - event.deltaY, y: current.y }));
+      const nextPan = { x: panRef.current.x - event.deltaY, y: panRef.current.y };
+      panRef.current = nextPan;
+      setPan(nextPan);
       return;
     }
-    if (contentKey && (interactionTarget === "page" || event.metaKey || event.ctrlKey)) {
+    if (contentKey && (event.metaKey || event.ctrlKey)) {
       const page = specimenRef.current?.querySelector(".imported-document");
       if (page) {
         page.scrollLeft += event.deltaX;
@@ -383,7 +386,24 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       return;
     }
     const factor = Math.exp(-event.deltaY * 0.0012);
-    setZoom((current) => Math.max(0.12, Math.min(4, current * factor)));
+    const cameraRect = cameraRef.current?.getBoundingClientRect();
+    const anchor = cameraRect ? {
+      x: event.clientX - cameraRect.left - cameraRect.width / 2,
+      y: event.clientY - cameraRect.top - cameraRect.height / 2,
+    } : { x: 0, y: 0 };
+    const currentZoom = zoomRef.current;
+    const nextZoom = Math.max(0.12, Math.min(4, currentZoom * factor));
+    const ratio = nextZoom / currentZoom;
+    if (ratio === 1) return;
+    const currentPan = panRef.current;
+    const nextPan = {
+      x: anchor.x - ratio * (anchor.x - currentPan.x),
+      y: anchor.y - ratio * (anchor.y - currentPan.y),
+    };
+    zoomRef.current = nextZoom;
+    panRef.current = nextPan;
+    setZoom(nextZoom);
+    setPan(nextPan);
   };
 
   const handleKeyDown = (event) => {
@@ -439,7 +459,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       ref={rootRef}
       data-exploded={explosion > 0 ? "true" : "false"}
       data-scrubbing-explosion={isScrubbingExplosion ? "true" : "false"}
-      data-interaction-target={contentKey ? interactionTarget : undefined}
     >
       <header className="spatializer-toolbar" data-spatializer-ignore="">
         <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
@@ -456,10 +475,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
         </label>
         <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
-          {contentKey && <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation target">
-            <button type="button" className={`${MODE_BUTTON} ${interactionTarget === "canvas" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={interactionTarget === "canvas"} onClick={() => setInteractionTarget("canvas")}>Canvas</button>
-            <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${interactionTarget === "page" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={interactionTarget === "page"} onClick={() => setInteractionTarget("page")}>Page</button>
-          </div>}
           <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
@@ -494,9 +509,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
         </div>
         <div className="spatializer-hint" data-spatializer-ignore="" data-export-ignore="">
           {contentKey
-            ? interactionTarget === "page"
-              ? "Wheel scrolls Page · Canvas button returns to Canvas navigation"
-              : "Wheel zooms Canvas · ⌘/Ctrl-wheel scrolls Page"
+            ? "Wheel zooms Canvas · ⌘/Ctrl-wheel scrolls Page"
             : effectiveMode === "orbit"
             ? "Drag to orbit · Shift: pan · Option: roll"
             : effectiveMode === "roll"

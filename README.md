@@ -8,7 +8,7 @@ This repository currently contains the standalone proof of concept. The reusable
 
 Use **Open…** to preview and load pasted HTML, a saved website package, a PDF, the built-in demo, or a public or local-development URL rendered through background Chromium. Submitted HTML is sanitized and never executes scripts. PDF pages currently import as faithful visual planes. Public pages cannot pull private-network subresources into a snapshot, and Toretto blocks capture of its own studio URL. The planned browser extension will capture live and signed-in pages directly.
 
-For loaded pages, **Canvas** is the default navigation target. The wheel zooms the Canvas (up/in, down/out), Shift-wheel pans it, and ⌘/Ctrl-wheel temporarily scrolls the page. Select **Page** to make ordinary wheel gestures scroll the page persistently. Captured links remain clickable and open safely in a new tab; dragging elsewhere continues to manipulate the Canvas.
+For loaded pages, the wheel zooms the Canvas (up/in, down/out), Shift-wheel pans it, and ⌘/Ctrl-wheel scrolls the page. Canvas zoom follows the pointer so the position under the mouse remains anchored. Captured links remain clickable and open safely in a new tab; dragging elsewhere continues to manipulate the Canvas.
 
 ## Runtime direction
 
