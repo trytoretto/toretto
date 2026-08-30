@@ -84,6 +84,14 @@ button, input { font-family: inherit; }
   will-change: transform;
 }
 
+.spatializer-world {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
 .spatializer-specimen,
 .spatializer-app-host {
   width: 100%;

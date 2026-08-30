@@ -423,14 +423,15 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   // Counter-scale the camera as the stack grows toward it. This keeps the
   // exploded specimen framed without changing the relative spacing of layers.
   const depthFit = 1 / (1 + (explosion / 1000) * 0.6);
-  const stageScale = fitScale * zoom * depthFit;
-  const deepestLayerZ = explosion * 0.3 * maxDepthWeightRef.current * stageScale;
+  const worldScale = fitScale * depthFit;
+  const deepestLayerZ = explosion * 0.3 * maxDepthWeightRef.current * worldScale;
   const rotatedStageZ = (
     APP_WIDTH * Math.abs(Math.sin(yaw * Math.PI / 180))
     + APP_HEIGHT * Math.abs(Math.sin(pitch * Math.PI / 180))
-  ) * stageScale * 0.5;
+  ) * worldScale * 0.5;
   const safePerspective = Math.max(perspective, deepestLayerZ + rotatedStageZ + 1200);
-  const stageTransform = `translate3d(${pan.x}px, ${pan.y}px, 0) rotateZ(${roll}deg) rotateX(${pitch}deg) rotateY(${yaw}deg) scale(${stageScale})`;
+  const cameraTransform = `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`;
+  const worldTransform = `rotateZ(${roll}deg) rotateX(${pitch}deg) rotateY(${yaw}deg) scale(${worldScale})`;
   const effectiveMode = mode === "pan" || isShiftHeld ? "pan" : isAltHeld ? "roll" : "orbit";
   const exportPreviewFooter = pendingExport?.scope === "scene" ? (
     <>
@@ -502,9 +503,11 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
         onKeyDown={handleKeyDown}
       >
         <div className="spatializer-grid" data-export-ignore="" aria-hidden="true" />
-        <div className="spatializer-stage" style={{ transform: stageTransform }}>
-          <div className="spatializer-specimen" ref={specimenRef}>
-            <div className="spatializer-app-host">{children}</div>
+        <div className="spatializer-stage" style={{ transform: cameraTransform }}>
+          <div className="spatializer-world" style={{ transform: worldTransform }}>
+            <div className="spatializer-specimen" ref={specimenRef}>
+              <div className="spatializer-app-host">{children}</div>
+            </div>
           </div>
         </div>
         <div className="spatializer-hint" data-spatializer-ignore="" data-export-ignore="">
