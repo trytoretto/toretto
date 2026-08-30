@@ -4,41 +4,182 @@ import { ExportPreview } from "./ExportPreview";
 
 const APP_WIDTH = 1440;
 const APP_HEIGHT = 900;
+const EXPLOSION_CONTROL_MIN = -1000;
 const EXPLOSION_CONTROL_MAX = 1000;
 const EXPLOSION_DEPTH_MAX = 10000;
 const EXPLOSION_CURVE = 2.4;
-const ZOOM_CONTROL_MAX = 1000;
-const ZOOM_MIN = 0.12;
-const ZOOM_MAX = 4;
+const EXPLOSION_LINEARITY = 0.3;
+const ZOOM_CONTROL_MIN = -2500;
+const ZOOM_CONTROL_MAX = 2500;
+const ZOOM_OUT_PER_1000 = 0.12;
+const ZOOM_IN_PER_1000 = 4;
+const ZOOM_MIN = ZOOM_OUT_PER_1000 ** 2.5;
+const ZOOM_MAX = ZOOM_IN_PER_1000 ** 2.5;
+const LENS_CONTROL_MIN = -10000;
+const LENS_CONTROL_MAX = 10000;
+const LENS_MIN = 1600;
+const LENS_DEFAULT = 5200;
+const LENS_MAX = 12000;
+const BIPOLAR_DEADZONE_PX = 2;
 const SURFACE_TAGS = new Set(["MAIN", "HEADER", "ASIDE", "NAV", "SECTION", "ARTICLE", "BUTTON", "DIALOG"]);
 const TOOLBAR_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const TOOLBAR_ACTIVE = "!border-[#66e4b3]/35 !bg-[#66e4b3]/10 !text-[#dff9ee]";
 const MODE_BUTTON = "h-7 cursor-pointer bg-white/[0.035] px-2.5 text-[11px] font-medium leading-none text-[#9ca5a3] transition-colors hover:bg-white/[0.07] hover:text-[#f2f5f4]";
 const SOURCE_BUTTON = "h-7 cursor-pointer whitespace-nowrap rounded-md border border-[#66e4b3] bg-[#66e4b3] px-2.5 text-[11px] font-semibold leading-none text-[#102019] transition-colors hover:border-[#8aefc8] hover:bg-[#8aefc8]";
+const IDENTITY_ORIENTATION = Object.freeze({ x: 0, y: 0, z: 0, w: 1 });
+const AXIS_VECTORS = Object.freeze({
+  x: Object.freeze({ x: 1, y: 0, z: 0 }),
+  y: Object.freeze({ x: 0, y: -1, z: 0 }),
+  z: Object.freeze({ x: 0, y: 0, z: 1 }),
+});
 
 function wrapAngle(angle) {
   return ((angle + 180) % 360 + 360) % 360 - 180;
 }
 
+function normalizeQuaternion(quaternion) {
+  const length = Math.hypot(quaternion.x, quaternion.y, quaternion.z, quaternion.w) || 1;
+  return {
+    x: quaternion.x / length,
+    y: quaternion.y / length,
+    z: quaternion.z / length,
+    w: quaternion.w / length,
+  };
+}
+
+function multiplyQuaternions(left, right) {
+  return normalizeQuaternion({
+    x: left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
+    y: left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
+    z: left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
+    w: left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
+  });
+}
+
+function axisAngleQuaternion(axis, degrees) {
+  const axisLength = Math.hypot(axis.x, axis.y, axis.z) || 1;
+  const radians = degrees * Math.PI / 180 / 2;
+  const sine = Math.sin(radians);
+  return normalizeQuaternion({
+    x: axis.x / axisLength * sine,
+    y: axis.y / axisLength * sine,
+    z: axis.z / axisLength * sine,
+    w: Math.cos(radians),
+  });
+}
+
+function invertQuaternion(quaternion) {
+  return { x: -quaternion.x, y: -quaternion.y, z: -quaternion.z, w: quaternion.w };
+}
+
+function rotateVector(quaternion, vector) {
+  const vectorQuaternion = { ...vector, w: 0 };
+  const rotated = multiplyQuaternions(
+    multiplyQuaternions(quaternion, vectorQuaternion),
+    invertQuaternion(quaternion),
+  );
+  return { x: rotated.x, y: rotated.y, z: rotated.z };
+}
+
+function quaternionBetween(from, to) {
+  const dot = Math.max(-1, Math.min(1, from.x * to.x + from.y * to.y + from.z * to.z));
+  if (dot < -0.999999) {
+    const helper = Math.abs(from.x) < 0.9 ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
+    const axis = {
+      x: from.y * helper.z - from.z * helper.y,
+      y: from.z * helper.x - from.x * helper.z,
+      z: from.x * helper.y - from.y * helper.x,
+    };
+    return axisAngleQuaternion(axis, 180);
+  }
+  return normalizeQuaternion({
+    x: from.y * to.z - from.z * to.y,
+    y: from.z * to.x - from.x * to.z,
+    z: from.x * to.y - from.y * to.x,
+    w: 1 + dot,
+  });
+}
+
+function quaternionMatrix(quaternion) {
+  const { x, y, z, w } = normalizeQuaternion(quaternion);
+  return `matrix3d(${[
+    1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w), 0,
+    2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w), 0,
+    2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y), 0,
+    0, 0, 0, 1,
+  ].join(",")})`;
+}
+
 function explosionDepth(control) {
-  const progress = Math.max(0, Math.min(1, control / EXPLOSION_CONTROL_MAX));
-  return EXPLOSION_DEPTH_MAX * progress ** EXPLOSION_CURVE;
+  const position = Math.max(EXPLOSION_CONTROL_MIN, Math.min(EXPLOSION_CONTROL_MAX, control));
+  const progress = Math.abs(position) / EXPLOSION_CONTROL_MAX;
+  const curvedProgress = (
+    EXPLOSION_LINEARITY * progress
+    + (1 - EXPLOSION_LINEARITY) * progress ** EXPLOSION_CURVE
+  );
+  return Math.sign(position) * EXPLOSION_DEPTH_MAX * curvedProgress;
 }
 
 function explosionControl(depth) {
-  const progress = Math.max(0, Math.min(1, depth / EXPLOSION_DEPTH_MAX));
-  return Math.round(EXPLOSION_CONTROL_MAX * progress ** (1 / EXPLOSION_CURVE));
+  const progress = Math.min(1, Math.abs(depth) / EXPLOSION_DEPTH_MAX);
+  return Math.round(Math.sign(depth) * EXPLOSION_CONTROL_MAX * progress ** (1 / EXPLOSION_CURVE));
 }
 
 function zoomFromControl(control) {
-  const progress = Math.max(0, Math.min(1, control / ZOOM_CONTROL_MAX));
-  return ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** progress;
+  const position = Math.max(ZOOM_CONTROL_MIN, Math.min(ZOOM_CONTROL_MAX, control));
+  return position < 0
+    ? ZOOM_OUT_PER_1000 ** (-position / 1000)
+    : ZOOM_IN_PER_1000 ** (position / 1000);
 }
 
 function zoomControl(zoom) {
-  return Math.round(
-    ZOOM_CONTROL_MAX * Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN),
+  return Math.round(zoom < 1
+    ? -1000 * Math.log(zoom) / Math.log(ZOOM_OUT_PER_1000)
+    : 1000 * Math.log(zoom) / Math.log(ZOOM_IN_PER_1000));
+}
+
+function lensFromControl(control) {
+  const position = Math.max(LENS_CONTROL_MIN, Math.min(LENS_CONTROL_MAX, control));
+  return position < 0
+    ? LENS_DEFAULT * (LENS_MIN / LENS_DEFAULT) ** (-position / Math.abs(LENS_CONTROL_MIN))
+    : LENS_DEFAULT * (LENS_MAX / LENS_DEFAULT) ** (position / LENS_CONTROL_MAX);
+}
+
+function lensControl(perspective) {
+  return Math.round(perspective < LENS_DEFAULT
+    ? LENS_CONTROL_MIN * Math.log(perspective / LENS_DEFAULT) / Math.log(LENS_MIN / LENS_DEFAULT)
+    : LENS_CONTROL_MAX * Math.log(perspective / LENS_DEFAULT) / Math.log(LENS_MAX / LENS_DEFAULT));
+}
+
+function bipolarRangeStyle(position, extent = 1000) {
+  const edge = 50 + Math.max(-1, Math.min(1, position / extent)) * 50;
+  return {
+    "--range-fill-start": `${Math.min(50, edge)}%`,
+    "--range-fill-end": `${Math.max(50, edge)}%`,
+  };
+}
+
+function outsideBipolarDeadzone(position, trackWidth, extent = 1000) {
+  const unitsPerPixel = trackWidth > 0 ? extent * 2 / trackWidth : 0;
+  const deadzone = BIPOLAR_DEADZONE_PX * unitsPerPixel;
+  const magnitude = Math.abs(position);
+  if (magnitude <= deadzone) return 0;
+  return Math.sign(position) * Math.round(
+    (magnitude - deadzone) * extent / (extent - deadzone),
   );
+}
+
+function handleRangeKey(event, value, min, max, onChange) {
+  const direction = {
+    ArrowLeft: -1,
+    ArrowDown: -1,
+    ArrowRight: 1,
+    ArrowUp: 1,
+  }[event.key];
+  if (!direction) return;
+  event.preventDefault();
+  const step = event.shiftKey ? 10 : 1;
+  onChange(Math.max(min, Math.min(max, value + direction * step)));
 }
 
 function spatialWeight(element, computed) {
@@ -54,34 +195,85 @@ function spatialWeight(element, computed) {
   return structuralWeight + stackingWeight;
 }
 
+function RangeValueInput({ value, onCommit, label, min = -1000, max = 1000 }) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => setDraft(String(value)), [value]);
+
+  const commit = () => {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const next = Math.max(min, Math.min(max, Math.round(parsed)));
+    setDraft(String(next));
+    onCommit(next);
+  };
+
+  return (
+    <input
+      className="spatializer-value-input"
+      type="number"
+      min={min}
+      max={max}
+      step="1"
+      value={draft}
+      aria-label={label}
+      onChange={(event) => {
+        const nextDraft = event.currentTarget.value;
+        setDraft(nextDraft);
+        if (nextDraft.trim() === "" || nextDraft === "-" || nextDraft === "+") return;
+        const parsed = Number(nextDraft);
+        if (Number.isFinite(parsed) && parsed >= min && parsed <= max) {
+          onCommit(Math.round(parsed));
+        }
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") {
+          setDraft(String(value));
+          event.preventDefault();
+        }
+      }}
+    />
+  );
+}
+
 export function Spatializer({ children, contentKey, onOpenSource }) {
   const rootRef = useRef(null);
   const cameraRef = useRef(null);
   const specimenRef = useRef(null);
   const nodesRef = useRef([]);
   const dragRef = useRef(null);
+  const gizmoDragRef = useRef(null);
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const resizeRef = useRef(null);
   const mutationFrameRef = useRef(0);
-  const scrubTimerRef = useRef(0);
+  const flattenTimerRef = useRef(0);
   const exportTimerRef = useRef(0);
   const exportUrlRef = useRef("");
   const exportPreviewUrlsRef = useRef([]);
   const previewGenerationRef = useRef(0);
   const explosionRef = useRef(0);
-  const maxDepthWeightRef = useRef(0);
+  const explosionPositionRef = useRef(0);
   const [explosionPosition, setExplosionPosition] = useState(0);
-  const [perspective, setPerspective] = useState(5200);
+  const [perspective, setPerspective] = useState(LENS_DEFAULT);
   const [mode, setMode] = useState("orbit");
+  const [orientation, setOrientation] = useState(IDENTITY_ORIENTATION);
   const [pitch, setPitch] = useState(0);
   const [yaw, setYaw] = useState(0);
   const [roll, setRoll] = useState(0);
+  const [tumble, setTumble] = useState(0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(0.7);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isScrubbingExplosion, setIsScrubbingExplosion] = useState(false);
+  const [isExplosionImmediate, setIsExplosionImmediate] = useState(true);
+  const [isSettlingFlat, setIsSettlingFlat] = useState(false);
+  const [isControlHeld, setIsControlHeld] = useState(false);
   const [isAltHeld, setIsAltHeld] = useState(false);
   const [isShiftHeld, setIsShiftHeld] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -98,6 +290,22 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   explosionRef.current = explosion;
   panRef.current = pan;
   zoomRef.current = zoom;
+
+  const applyExplosionPosition = useCallback((nextPosition, immediate = false) => {
+    const next = Math.max(EXPLOSION_CONTROL_MIN, Math.min(EXPLOSION_CONTROL_MAX, nextPosition));
+    const previous = explosionPositionRef.current;
+    const shouldSnap = immediate || (Math.abs(previous) <= 1 && Math.abs(next) <= 1);
+    window.clearTimeout(flattenTimerRef.current);
+    setIsExplosionImmediate(shouldSnap);
+    if (next === 0 && previous !== 0 && !shouldSnap) {
+      setIsSettlingFlat(true);
+      flattenTimerRef.current = window.setTimeout(() => setIsSettlingFlat(false), 420);
+    } else {
+      setIsSettlingFlat(false);
+    }
+    explosionPositionRef.current = next;
+    setExplosionPosition(next);
+  }, []);
 
   const fitView = useCallback(() => {
     const camera = cameraRef.current;
@@ -147,18 +355,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       }
       if (element.dataset.spatialOriginalOverflow === "clip") element.dataset.spatialClips = "";
     }
-    maxDepthWeightRef.current = nodes.reduce((maximum, element) => {
-      let depthWeight = 0;
-      let current = element;
-      while (current && appShell.contains(current)) {
-        if (current.hasAttribute("data-spatial-node")) {
-          depthWeight += Number(current.dataset.spatialWeight || 0);
-        }
-        if (current === appShell) break;
-        current = current.parentElement;
-      }
-      return Math.max(maximum, depthWeight);
-    }, 0);
     nodesRef.current = nodes;
     setNodeCount(nodes.length);
     updateNodeDepth(explosionRef.current);
@@ -182,7 +378,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   useEffect(() => updateNodeDepth(explosion), [explosion, updateNodeDepth]);
 
   useEffect(() => () => {
-    window.clearTimeout(scrubTimerRef.current);
+    window.clearTimeout(flattenTimerRef.current);
     window.clearTimeout(exportTimerRef.current);
     if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
     exportPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -191,14 +387,17 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   useEffect(() => {
     const handleModifierDown = (event) => {
       if (event.key === "Shift") setIsShiftHeld(true);
+      if (event.key === "Control") setIsControlHeld(true);
       if (event.key === "Alt") setIsAltHeld(true);
     };
     const handleModifierUp = (event) => {
       if (event.key === "Shift") setIsShiftHeld(false);
+      if (event.key === "Control") setIsControlHeld(false);
       if (event.key === "Alt") setIsAltHeld(false);
     };
     const clearModifiers = () => {
       setIsShiftHeld(false);
+      setIsControlHeld(false);
       setIsAltHeld(false);
     };
     window.addEventListener("keydown", handleModifierDown);
@@ -230,17 +429,17 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   }, [fitView]);
 
   const flatten = () => {
-    explosionRef.current = 0;
-    updateNodeDepth(0);
-    setExplosionPosition(0);
+    applyExplosionPosition(0);
   };
 
   const reset = () => {
     flatten();
-    setPerspective(5200);
+    setPerspective(LENS_DEFAULT);
     setPitch(0);
     setYaw(0);
     setRoll(0);
+    setTumble(0);
+    setOrientation(IDENTITY_ORIENTATION);
     fitView();
   };
 
@@ -357,10 +556,10 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   };
 
   const handleExplosionInput = (event) => {
-    setIsScrubbingExplosion(true);
-    setExplosionPosition(Number(event.currentTarget.value));
-    window.clearTimeout(scrubTimerRef.current);
-    scrubTimerRef.current = window.setTimeout(() => setIsScrubbingExplosion(false), 120);
+    applyExplosionPosition(outsideBipolarDeadzone(
+      Number(event.currentTarget.value),
+      event.currentTarget.clientWidth,
+    ), true);
   };
 
   const beginDrag = (event) => {
@@ -380,11 +579,14 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     if (!drag) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
-    const panGesture = mode === "pan" || event.shiftKey || drag.button === 1 || drag.button === 2;
-    const rollGesture = !panGesture && event.altKey;
+    const tumbleGesture = event.ctrlKey && drag.button === 0;
+    const rollGesture = !tumbleGesture && event.altKey && drag.button === 0;
+    const panGesture = !tumbleGesture && !rollGesture
+      && (mode === "pan" || event.shiftKey || drag.button === 1 || drag.button === 2);
     drag.x = event.clientX;
     drag.y = event.clientY;
-    if (panGesture) setPan((current) => ({ x: current.x + dx, y: current.y + dy }));
+    if (tumbleGesture) setTumble((current) => wrapAngle(current - dy * 0.18));
+    else if (panGesture) setPan((current) => ({ x: current.x + dx, y: current.y + dy }));
     else if (rollGesture) setRoll((current) => wrapAngle(current + dx * 0.24));
     else {
       setYaw((current) => wrapAngle(current + dx * 0.2));
@@ -395,6 +597,103 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const endDrag = (event) => {
     dragRef.current = null;
     if (cameraRef.current?.hasPointerCapture(event.pointerId)) cameraRef.current.releasePointerCapture(event.pointerId);
+  };
+
+  const beginGizmoDrag = (event, axis = null) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cameraRef.current?.focus({ preventScroll: true });
+    const gizmoRect = event.currentTarget.closest(".spatializer-gizmo")?.getBoundingClientRect();
+    gizmoDragRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      axis,
+      moved: false,
+      centerX: gizmoRect ? gizmoRect.left + gizmoRect.width / 2 : event.clientX,
+      centerY: gizmoRect ? gizmoRect.top + gizmoRect.height / 2 : event.clientY,
+      radius: 30,
+      startSceneOrientation: sceneOrientation,
+      baseOrientation,
+      startAxis: axis ? rotateVector(sceneOrientation, AXIS_VECTORS[axis]) : null,
+      rotationAxis: null,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveGizmoDrag = (event) => {
+    const drag = gizmoDragRef.current;
+    if (!drag) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 4) drag.moved = true;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    if (drag.axis && !drag.moved) return;
+    if (drag.axis) {
+      const relativeX = (event.clientX - drag.centerX) / drag.radius;
+      const relativeY = (event.clientY - drag.centerY) / drag.radius;
+      const distance = Math.hypot(relativeX, relativeY);
+      const desired = distance > 1
+        ? { x: relativeX / distance, y: relativeY / distance, z: 0 }
+        : { x: relativeX, y: relativeY, z: Math.sqrt(Math.max(0, 1 - distance ** 2)) };
+      const cross = {
+        x: drag.startAxis.y * desired.z - drag.startAxis.z * desired.y,
+        y: drag.startAxis.z * desired.x - drag.startAxis.x * desired.z,
+        z: drag.startAxis.x * desired.y - drag.startAxis.y * desired.x,
+      };
+      const crossLength = Math.hypot(cross.x, cross.y, cross.z);
+      if (crossLength > 0.0001) {
+        drag.rotationAxis = {
+          x: cross.x / crossLength,
+          y: cross.y / crossLength,
+          z: cross.z / crossLength,
+        };
+      }
+      const dot = Math.max(-1, Math.min(1,
+        drag.startAxis.x * desired.x + drag.startAxis.y * desired.y + drag.startAxis.z * desired.z,
+      ));
+      const baseAngle = Math.acos(dot) * 180 / Math.PI;
+      const delta = distance > 1 && drag.rotationAxis
+        ? axisAngleQuaternion(drag.rotationAxis, baseAngle + (distance - 1) * 90)
+        : quaternionBetween(drag.startAxis, desired);
+      const targetSceneOrientation = multiplyQuaternions(delta, drag.startSceneOrientation);
+      setOrientation(multiplyQuaternions(targetSceneOrientation, invertQuaternion(drag.baseOrientation)));
+    } else if (event.ctrlKey) setTumble((current) => wrapAngle(current - dy * 0.18));
+    else if (event.altKey) setRoll((current) => wrapAngle(current + dx * 0.24));
+    else {
+      setYaw((current) => wrapAngle(current + dx * 0.2));
+      setPitch((current) => wrapAngle(current - dy * 0.18));
+    }
+  };
+
+  const endGizmoDrag = (event) => {
+    event.stopPropagation();
+    const drag = gizmoDragRef.current;
+    gizmoDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (drag?.axis && !drag.moved) setAxisView(drag.axis);
+  };
+
+  const setAxisView = (axis) => {
+    setOrientation(IDENTITY_ORIENTATION);
+    setRoll(0);
+    setTumble(0);
+    if (axis === "x") {
+      setPitch(0);
+      setYaw(-90);
+    } else if (axis === "y") {
+      setPitch(90);
+      setYaw(0);
+    } else {
+      setPitch(0);
+      setYaw(0);
+    }
   };
 
   const handleWheel = (event) => {
@@ -451,15 +750,22 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   // Explosion only changes layer depth. Framing remains an explicit camera
   // choice through zoom, pan, and Fit rather than changing as the stack grows.
   const worldScale = fitScale;
-  const deepestLayerZ = explosion * 0.3 * maxDepthWeightRef.current * worldScale;
-  const rotatedStageZ = (
-    APP_WIDTH * Math.abs(Math.sin(yaw * Math.PI / 180))
-    + APP_HEIGHT * Math.abs(Math.sin(pitch * Math.PI / 180))
-  ) * worldScale * 0.5;
-  const safePerspective = Math.max(perspective, deepestLayerZ + rotatedStageZ + 1200);
   const cameraTransform = `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`;
-  const worldTransform = `rotateZ(${roll}deg) rotateX(${pitch}deg) rotateY(${yaw}deg) scale(${worldScale})`;
-  const effectiveMode = mode === "pan" || isShiftHeld ? "pan" : isAltHeld ? "roll" : "orbit";
+  const baseOrientation = multiplyQuaternions(
+    axisAngleQuaternion(AXIS_VECTORS.z, roll),
+    multiplyQuaternions(
+      axisAngleQuaternion(AXIS_VECTORS.x, pitch),
+      multiplyQuaternions(
+        axisAngleQuaternion({ x: 0, y: 1, z: 0 }, yaw),
+        axisAngleQuaternion(AXIS_VECTORS.x, tumble),
+      ),
+    ),
+  );
+  const sceneOrientation = multiplyQuaternions(orientation, baseOrientation);
+  const worldTransform = `${quaternionMatrix(sceneOrientation)} scale(${worldScale})`;
+  const gizmoTransform = quaternionMatrix(sceneOrientation);
+  const gizmoInverseTransform = quaternionMatrix(invertQuaternion(sceneOrientation));
+  const effectiveMode = isControlHeld ? "tumble" : isAltHeld ? "roll" : mode === "pan" || isShiftHeld ? "pan" : "orbit";
   const exportPreviewFooter = pendingExport?.scope === "scene" ? (
     <>
       <label className="flex items-center gap-2 text-[10px] font-medium text-[#8e9a94]">
@@ -485,8 +791,8 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     <div
       className="spatializer-root"
       ref={rootRef}
-      data-exploded={explosion > 0 ? "true" : "false"}
-      data-scrubbing-explosion={isScrubbingExplosion ? "true" : "false"}
+      data-exploded={explosion !== 0 || isSettlingFlat ? "true" : "false"}
+      data-immediate-explosion={isExplosionImmediate ? "true" : "false"}
     >
       <header className="spatializer-toolbar" data-spatializer-ignore="">
         <div className="flex shrink-0 items-center gap-3 border-e border-white/10 pe-4">
@@ -494,47 +800,100 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           <button type="button" className={SOURCE_BUTTON} onClick={onOpenSource}>Open…</button>
           <button type="button" className={`${TOOLBAR_BUTTON} text-[#c7f4e2]`} onClick={() => void openExport()}>Export…</button>
         </div>
-        <label className="spatializer-range">
-          <span>Explosion <output>{Math.round(explosion * 0.3)}px gap</output></span>
+        <div className="spatializer-range spatializer-bipolar">
+          <span>Explosion <RangeValueInput value={explosionPosition} label="Explosion value" onCommit={applyExplosionPosition} /></span>
           <input
             type="range"
-            min="0"
+            min={EXPLOSION_CONTROL_MIN}
             max={EXPLOSION_CONTROL_MAX}
             step="1"
             value={explosionPosition}
             aria-label="Explosion depth"
             aria-valuetext={`${Math.round(explosion * 0.3)} pixel layer gap`}
+            style={bipolarRangeStyle(explosionPosition)}
+            onKeyDown={(event) => handleRangeKey(
+              event,
+              explosionPosition,
+              EXPLOSION_CONTROL_MIN,
+              EXPLOSION_CONTROL_MAX,
+              applyExplosionPosition,
+            )}
             onInput={handleExplosionInput}
           />
-        </label>
-        <label className="spatializer-range spatializer-lens">
-          <span>Lens <output>{perspective}px</output></span>
-          <input type="range" min="1600" max="12000" step="100" value={perspective} onInput={(event) => setPerspective(Number(event.currentTarget.value))} />
-        </label>
-        <label className="spatializer-range spatializer-zoom">
-          <span>Zoom <output>{Math.round(zoom * 100)}%</output></span>
+        </div>
+        <div className="spatializer-range spatializer-lens spatializer-bipolar">
+          <span>Perspective <RangeValueInput value={lensControl(perspective)} label="Perspective value" min={LENS_CONTROL_MIN} max={LENS_CONTROL_MAX} onCommit={(value) => setPerspective(lensFromControl(value))} /></span>
           <input
             type="range"
-            min="0"
+            min={LENS_CONTROL_MIN}
+            max={LENS_CONTROL_MAX}
+            step="1"
+            value={lensControl(perspective)}
+            aria-label="Perspective strength"
+            aria-valuetext={`${lensControl(perspective)} perspective, ${Math.round(perspective)} pixel perspective distance`}
+            style={bipolarRangeStyle(lensControl(perspective), LENS_CONTROL_MAX)}
+            onKeyDown={(event) => handleRangeKey(
+              event,
+              lensControl(perspective),
+              LENS_CONTROL_MIN,
+              LENS_CONTROL_MAX,
+              (value) => setPerspective(lensFromControl(value)),
+            )}
+            onInput={(event) => setPerspective(lensFromControl(
+              outsideBipolarDeadzone(
+                Number(event.currentTarget.value),
+                event.currentTarget.clientWidth,
+                LENS_CONTROL_MAX,
+              ),
+            ))}
+          />
+        </div>
+        <div className="spatializer-range spatializer-zoom spatializer-bipolar">
+          <span>Zoom <RangeValueInput value={zoomControl(zoom)} label="Zoom value" min={ZOOM_CONTROL_MIN} max={ZOOM_CONTROL_MAX} onCommit={(value) => {
+            const nextZoom = zoomFromControl(value);
+            zoomRef.current = nextZoom;
+            setZoom(nextZoom);
+          }} /></span>
+          <input
+            type="range"
+            min={ZOOM_CONTROL_MIN}
             max={ZOOM_CONTROL_MAX}
             step="1"
             value={zoomControl(zoom)}
             aria-label="Canvas zoom"
             aria-valuetext={`${Math.round(zoom * 100)} percent`}
+            style={bipolarRangeStyle(zoomControl(zoom), ZOOM_CONTROL_MAX)}
+            onKeyDown={(event) => handleRangeKey(
+              event,
+              zoomControl(zoom),
+              ZOOM_CONTROL_MIN,
+              ZOOM_CONTROL_MAX,
+              (value) => {
+                const nextZoom = zoomFromControl(value);
+                zoomRef.current = nextZoom;
+                setZoom(nextZoom);
+              },
+            )}
             onInput={(event) => {
-              const nextZoom = zoomFromControl(Number(event.currentTarget.value));
+              const nextZoom = zoomFromControl(
+                outsideBipolarDeadzone(
+                  Number(event.currentTarget.value),
+                  event.currentTarget.clientWidth,
+                  ZOOM_CONTROL_MAX,
+                ),
+              );
               zoomRef.current = nextZoom;
               setZoom(nextZoom);
             }}
           />
-        </label>
+        </div>
         <div className="spatializer-actions flex flex-nowrap justify-end gap-1">
           <div className="inline-flex overflow-hidden rounded-md border border-white/10" role="group" aria-label="Navigation mode">
             <button type="button" className={`${MODE_BUTTON} ${effectiveMode !== "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode !== "pan"} onClick={() => setMode("orbit")}>Orbit</button>
             <button type="button" className={`${MODE_BUTTON} border-s border-white/10 ${effectiveMode === "pan" ? TOOLBAR_ACTIVE : ""}`} aria-pressed={effectiveMode === "pan"} onClick={() => setMode("pan")}>Pan</button>
           </div>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { explosionRef.current = 1000; updateNodeDepth(1000); setExplosionPosition(explosionControl(1000)); }}>Explode ×10</button>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setPitch(3); setYaw(-28); setRoll(0); }}>Isometric</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => applyExplosionPosition(explosionControl(1000))}>Explode ×10</button>
+          <button type="button" className={TOOLBAR_BUTTON} onClick={() => { setOrientation(IDENTITY_ORIENTATION); setPitch(3); setYaw(-28); setRoll(0); setTumble(0); }}>Isometric</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={fitView}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={flatten}>Flat</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={reset}>Reset</button>
@@ -544,9 +903,9 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       <main
         className={`spatializer-camera mode-${effectiveMode}`}
         ref={cameraRef}
-        style={{ perspective: `${safePerspective}px` }}
+        style={{ perspective: `${perspective}px` }}
         tabIndex={0}
-        aria-label="Spatial canvas. Drag to orbit or pan, use the wheel to zoom, and arrow keys to move."
+        aria-label="Spatial canvas. Drag to orbit or pan, Control-drag to tumble, Option-drag to roll, use the wheel to zoom, and arrow keys to move."
         onPointerDown={beginDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
@@ -563,13 +922,46 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
             </div>
           </div>
         </div>
+        <div className="spatializer-gizmo" data-spatializer-ignore="" data-export-ignore="" aria-label="Scene orientation">
+          <div className="spatializer-gizmo-rotor" style={{ transform: gizmoTransform }}>
+            <span className="spatializer-gizmo-axis axis-x" aria-hidden="true" />
+            <span className="spatializer-gizmo-axis axis-y" aria-hidden="true" />
+            <span className="spatializer-gizmo-axis axis-z" aria-hidden="true" />
+            {["x", "y", "z"].map((axis) => (
+              <span className={`spatializer-gizmo-anchor endpoint-${axis}`} key={axis}>
+                <button
+                  type="button"
+                  className={`spatializer-gizmo-endpoint axis-${axis}`}
+                  style={{ transform: gizmoInverseTransform }}
+                  aria-label={`Drag ${axis.toUpperCase()} axis or click to view`}
+                  onPointerDown={(event) => beginGizmoDrag(event, axis)}
+                  onPointerMove={moveGizmoDrag}
+                  onPointerUp={endGizmoDrag}
+                  onPointerCancel={endGizmoDrag}
+                >{axis.toUpperCase()}</button>
+              </span>
+            ))}
+            <button
+              type="button"
+              className="spatializer-gizmo-center"
+              style={{ transform: gizmoInverseTransform }}
+              aria-label="Drag scene orientation"
+              onPointerDown={beginGizmoDrag}
+              onPointerMove={moveGizmoDrag}
+              onPointerUp={endGizmoDrag}
+              onPointerCancel={endGizmoDrag}
+            />
+          </div>
+        </div>
         <div className="spatializer-hint" data-spatializer-ignore="" data-export-ignore="">
           {contentKey
-            ? "Wheel zooms Canvas · ⌘/Ctrl-wheel scrolls Page"
+            ? "Wheel zooms Canvas · ⌘/Ctrl-wheel scrolls Page · Control-drag tumbles"
             : effectiveMode === "orbit"
-            ? "Drag to orbit · Shift: pan · Option: roll"
+            ? "Drag to orbit · Shift: pan · Control: tumble · Option: roll"
+            : effectiveMode === "tumble"
+              ? `Control-drag vertically to tumble · Release Control to ${mode}`
             : effectiveMode === "roll"
-              ? "Option-drag to roll · Release Option to orbit"
+              ? `Option-drag horizontally to roll · Release Option to ${mode}`
             : mode === "pan"
               ? "Drag to pan · Wheel to zoom"
               : "Release Shift to orbit · Wheel to zoom"}
