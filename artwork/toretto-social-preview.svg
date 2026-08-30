@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title description">
+  <title id="title">Toretto</title>
+  <desc id="description">Drive through the DOM in three dimensions.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1411"/>
+      <stop offset=".55" stop-color="#080c0a"/>
+      <stop offset="1" stop-color="#030504"/>
+    </linearGradient>
+    <linearGradient id="speed" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#66e4b3" stop-opacity="0"/>
+      <stop offset=".72" stop-color="#66e4b3" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#66e4b3" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="35%" cy="50%" r="65%">
+      <stop offset="0" stop-color="#66e4b3" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#66e4b3" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#66e4b3" stroke-opacity=".055"/>
+    </pattern>
+    <filter id="soft-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#background)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <path d="M0 438 1280 250V640H0Z" fill="url(#grid)" opacity=".68"/>
+
+  <g fill="none" stroke="url(#speed)" stroke-linecap="round">
+    <path d="M412 210H1180" stroke-width="3"/>
+    <path d="M472 231H1114"/>
+    <path d="M425 426H1092" stroke-width="2"/>
+    <path d="M520 448H1170"/>
+  </g>
+
+  <g transform="translate(92 128) scale(12)" filter="url(#soft-glow)">
+    <path d="M9.4 30H8c-3.9 0-6-2.1-6-6V8c0-3.9 2.1-6 6-6h16c3.9 0 6 2.1 6 6v16c0 3.9-2.1 6-6 6h-1.4c-.4-.9-.8-1.6-1.1-2.3.5-.7 1.1-1.5 1.7-2.2.1-1.3.3-2.6.4-3.9.4-.5.7-.9 1-1.4l.4-3.8c-.4-.6-.9-1.1-1.4-1.5v-2c0-4-2.8-6.6-7.6-6.6s-7.6 2.6-7.6 6.6v2c-.5.4-1 1-1.4 1.5l.4 3.8c.3.5.6.9 1 1.4.1 1.3.3 2.6.4 3.9.6.7 1.2 1.5 1.7 2.2-.3.7-.7 1.4-1.1 2.3Z" fill="none" stroke="#66e4b3" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <g transform="skewX(-8)">
+    <g transform="translate(857 0) scale(1.06 1) translate(-848 0)">
+      <text x="516" y="370" fill="#eef5f2" font-family="Arial Black, Arial, sans-serif" font-size="164" font-style="italic" font-weight="900">T</text>
+      <text x="663" y="279" fill="#4a5a52" fill-opacity=".72" font-family="Arial Black, Arial, sans-serif" font-size="35" font-style="italic" font-weight="900" letter-spacing="2.5">HE DOM IN 3D</text>
+      <text x="625" y="370" fill="#eef5f2" font-family="Arial Black, Arial, sans-serif" font-size="104" font-style="italic" font-weight="900" letter-spacing="1">ORETTO</text>
+    </g>
+    <rect x="548" y="397" width="600" height="5" rx="2.5" fill="#66e4b3"/>
+  </g>
+</svg>
