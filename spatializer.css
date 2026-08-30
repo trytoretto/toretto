@@ -716,6 +716,11 @@ button, input { font-family: inherit; }
   background: #66e4b3;
   box-shadow: 0 0 0 1px rgba(102, 228, 179, .8);
 }
+.spatializer-keyframe-segments { position: absolute; z-index: 1; inset: 50% 7px auto; height: 0; pointer-events: none; }
+.spatializer-keyframe-segments span { position: absolute; height: 2px; background: linear-gradient(90deg, rgba(240, 184, 90, .72), rgba(240, 184, 90, .18)); transform: translateY(-1px); }
+.spatializer-keyframe-segments span::after { content: ""; position: absolute; inset-inline-end: -1px; inset-block-start: -3px; width: 0; height: 0; border-block: 4px solid transparent; border-inline-start: 5px solid rgba(240, 184, 90, .72); }
+.spatializer-keyframe-segments span.is-selected { z-index: 2; height: 3px; background: linear-gradient(90deg, rgba(102, 228, 179, .95), rgba(102, 228, 179, .28)); box-shadow: 0 0 8px rgba(102, 228, 179, .26); }
+.spatializer-keyframe-segments span.is-selected::after { inset-block-start: -2.5px; border-inline-start-color: #66e4b3; }
 .spatializer-keyframe-markers { position: absolute; inset: 50% 7px auto; height: 0; pointer-events: none; }
 .spatializer-keyframe-markers button { position: absolute; z-index: 1; width: 10px; height: 10px; margin: -5px; padding: 0; border: 1px solid #112018; border-radius: 2px; outline: none; background: #f0b85a; box-shadow: 0 0 0 1px rgba(240, 184, 90, .2); transform: rotate(45deg); pointer-events: auto; touch-action: none; cursor: ew-resize; }
 .spatializer-keyframe-markers button:hover { background: #ffd37f; }

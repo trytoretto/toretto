@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { exportTransparentPng, measureProjectedSceneBounds, renderPngPreview } from "./exportFrame";
-import { ExportPreview } from "./ExportPreview";
+import { animationExportCapabilities, createAnimationExport, finishAnimationExport, uploadAnimationFrame } from "./exportAnimation";
+import { ExportDialog } from "./ExportDialog";
 import torettoMarkUrl from "./toretto-mark.svg";
 
 const APP_WIDTH = 1440;
@@ -561,6 +562,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const animationFrameRef = useRef(0);
   const playbackStartedRef = useRef(0);
   const playbackLaunchRef = useRef(0);
+  const isRenderingAnimationRef = useRef(false);
   const timelineMarkersRef = useRef(null);
   const keyframeDragRef = useRef(null);
   const keyframeIdRef = useRef(0);
@@ -596,7 +598,13 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [isExporting, setIsExporting] = useState(false);
   const [isPreviewingExport, setIsPreviewingExport] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportKind, setExportKind] = useState("frame");
   const [exportScope, setExportScope] = useState("viewport");
+  const [animationFormat, setAnimationFormat] = useState("mp4");
+  const [animationFps, setAnimationFps] = useState(30);
+  const [animationScale, setAnimationScale] = useState(1);
+  const [animationCapabilities, setAnimationCapabilities] = useState(null);
+  const [exportProgress, setExportProgress] = useState(0);
   const [scenePadding, setScenePadding] = useState(10);
   const [exportPreviews, setExportPreviews] = useState({});
   const [exportStatus, setExportStatus] = useState("");
@@ -994,7 +1002,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   }, []);
 
   useEffect(() => {
-    if (isPlaying) return;
+    if (isPlaying || isRenderingAnimationRef.current) return;
     const currentState = captureAnimationState();
     setKeyframes((current) => {
       const baseline = current.find((frame) => frame.id === "baseline" || frame.time === 0);
@@ -1249,6 +1257,68 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     }
   };
 
+  const exportAnimation = async () => {
+    if (!cameraRef.current || isExporting) return;
+    if (keyframes.length < 2) {
+      setExportStatus("Add a second keyframe before exporting an animation.");
+      return;
+    }
+    const frameCount = Math.max(2, Math.round(timelineDuration * animationFps));
+    const restore = {
+      state: captureAnimationState(),
+      playhead,
+      selectedKeyframeId,
+    };
+    isRenderingAnimationRef.current = true;
+    setIsPlaying(false);
+    setIsExporting(true);
+    setDidSaveExport(false);
+    setExportProgress(0);
+    setExportStatus("Preparing animation…");
+    try {
+      const session = await createAnimationExport({ format: animationFormat, fps: animationFps, frameCount });
+      for (let index = 0; index < frameCount; index += 1) {
+        const time = index / (frameCount - 1) * timelineDuration;
+        flushSync(() => {
+          setPlayhead(time);
+          setSelectedKeyframeId(null);
+          applyAnimationState(evaluateKeyframes(keyframes, time));
+        });
+        await nextPaint();
+        const frame = await exportTransparentPng(cameraRef.current, "viewport", { pixelRatio: animationScale });
+        await uploadAnimationFrame(session.id, index, frame.blob);
+        const completed = index + 1;
+        setExportProgress(completed / frameCount * 90);
+        setExportStatus(`Rendering frame ${completed} of ${frameCount}…`);
+      }
+      setExportProgress(94);
+      setExportStatus(`Encoding ${animationFormat === "prores4444" ? "ProRes 4444" : animationFormat === "pngSequence" ? "PNG sequence" : animationFormat.toUpperCase()}…`);
+      const result = await finishAnimationExport(session.id, animationFormat);
+      if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
+      exportUrlRef.current = URL.createObjectURL(result.blob);
+      setPendingExport({
+        ...result,
+        url: exportUrlRef.current,
+        frameCount,
+        fps: animationFps,
+        duration: timelineDuration,
+      });
+      setExportProgress(100);
+      setExportStatus("");
+    } catch (error) {
+      setExportStatus(error instanceof Error ? error.message : "The animation could not be exported.");
+    } finally {
+      flushSync(() => {
+        applyAnimationState(restore.state);
+        setPlayhead(restore.playhead);
+        setSelectedKeyframeId(restore.selectedKeyframeId);
+      });
+      await nextPaint();
+      isRenderingAnimationRef.current = false;
+      setIsExporting(false);
+    }
+  };
+
   const openExport = async () => {
     if (!cameraRef.current) return;
     const generation = previewGenerationRef.current + 1;
@@ -1257,8 +1327,12 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     exportPreviewUrlsRef.current = [];
     setExportPreviews({});
     setExportStatus("");
+    setExportProgress(0);
     setExportOpen(true);
     setIsPreviewingExport(true);
+    void animationExportCapabilities()
+      .then(setAnimationCapabilities)
+      .catch(() => setAnimationCapabilities({ available: false, ffmpeg: false, formats: [] }));
     const scopes = ["viewport", "scene"];
     const results = [];
     for (const scope of scopes) {
@@ -1285,6 +1359,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   };
 
   const closeExport = () => {
+    if (isExporting) return;
     previewGenerationRef.current += 1;
     if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
     exportUrlRef.current = "";
@@ -1295,6 +1370,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     setDidSaveExport(false);
     setExportOpen(false);
     setExportStatus("");
+    setExportProgress(0);
     setIsPreviewingExport(false);
   };
 
@@ -1304,6 +1380,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     setPendingExport(null);
     setDidSaveExport(false);
     setExportStatus("");
+    setExportProgress(0);
   };
 
   const saveExport = async () => {
@@ -1312,7 +1389,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       try {
         const handle = await window.showSaveFilePicker({
           suggestedName: pendingExport.filename,
-          types: [{ description: "PNG image", accept: { "image/png": [".png"] } }],
+          types: [{ description: pendingExport.label || "PNG image", accept: { [pendingExport.mimeType || "image/png"]: [`.${pendingExport.extension || "png"}`] } }],
         });
         const writable = await handle.createWritable();
         await writable.write(pendingExport.blob);
@@ -1322,7 +1399,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
         setExportStatus(`Saved ${pendingExport.filename}`);
       } catch (error) {
         if (!(error instanceof DOMException) || error.name !== "AbortError") {
-          setExportStatus(error instanceof Error ? error.message : "The PNG could not be saved.");
+          setExportStatus(error instanceof Error ? error.message : "The export could not be saved.");
         }
       }
       return;
@@ -1662,6 +1739,11 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     [group]: { ...current[group], [axis]: value },
   }));
   const selectedKeyframe = keyframes.find((frame) => frame.id === selectedKeyframeId);
+  const orderedKeyframes = [...keyframes].sort((left, right) => left.time - right.time);
+  const selectedKeyframeIndex = orderedKeyframes.findIndex((frame) => frame.id === selectedKeyframeId);
+  const selectedNextKeyframe = selectedKeyframeIndex >= 0
+    ? orderedKeyframes[selectedKeyframeIndex + 1]
+    : null;
   const selectedCurve = selectedKeyframe?.curve
     || EASING_PRESETS[selectedKeyframe?.easing]?.curve
     || EASING_PRESETS.linear.curve;
@@ -2243,12 +2325,17 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               if (next) seekTimeline(next.time, next.id);
             }}>Next</button>
             <button type="button" disabled={!selectedKeyframeId || selectedKeyframeId === "baseline"} onClick={deleteSelectedKeyframe}>Delete</button>
-            <div className="spatializer-timeline-easing">
-              <span>Curve</span>
+            <div
+              className="spatializer-timeline-easing"
+              title={selectedNextKeyframe
+                ? `Curve applies after this keyframe, toward ${selectedNextKeyframe.time.toFixed(2)} seconds`
+                : "The final keyframe has no outgoing curve"}
+            >
+              <span>{selectedNextKeyframe ? "Curve →" : "Curve · end"}</span>
               <select
                 aria-label="Selected keyframe easing"
                 value={selectedKeyframe?.easing || "linear"}
-                disabled={!selectedKeyframe}
+                disabled={!selectedKeyframe || !selectedNextKeyframe}
                 onChange={(event) => {
                   const easing = event.currentTarget.value;
                   setKeyframes((current) => current.map((frame) => (
@@ -2274,10 +2361,10 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
                 className="spatializer-curve-swatch-button"
                 aria-label="Edit selected keyframe curve"
                 aria-expanded={curveEditorOpen}
-                disabled={!selectedKeyframe}
+                disabled={!selectedKeyframe || !selectedNextKeyframe}
                 onClick={() => setCurveEditorOpen((current) => !current)}
               ><CurveSwatch curve={selectedCurve} /></button>
-              {curveEditorOpen && selectedKeyframe && <CurveEditor
+              {curveEditorOpen && selectedKeyframe && selectedNextKeyframe && <CurveEditor
                 curve={selectedCurve}
                 onClose={() => setCurveEditorOpen(false)}
                 onPreset={(easing) => setKeyframes((current) => current.map((frame) => (
@@ -2312,6 +2399,19 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           </div>
           <div className="spatializer-timeline-track">
             <input type="range" min="0" max={timelineDuration} step="0.001" value={playhead} aria-label="Timeline playhead" aria-valuetext={`${playhead.toFixed(2)} seconds`} onInput={(event) => seekTimeline(Number(event.currentTarget.value))} />
+            <div className="spatializer-keyframe-segments" aria-hidden="true">
+              {orderedKeyframes.slice(0, -1).map((frame, index) => {
+                const nextFrame = orderedKeyframes[index + 1];
+                return <span
+                  key={`${frame.id}-outgoing`}
+                  className={frame.id === selectedKeyframeId ? "is-selected" : ""}
+                  style={{
+                    insetInlineStart: `${frame.time / timelineDuration * 100}%`,
+                    width: `${(nextFrame.time - frame.time) / timelineDuration * 100}%`,
+                  }}
+                />;
+              })}
+            </div>
             <div className="spatializer-keyframe-markers" ref={timelineMarkersRef}>
               {keyframeDragPreview?.dropTargetTime != null && <span
                 className="spatializer-keyframe-drop-zone"
@@ -2347,7 +2447,32 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           </div>
         </section>}
       </main>
-      {exportOpen && <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#040706]/80 p-6 backdrop-blur-xl" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && closeExport()}><section className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#151a18] text-[#e9efec] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="export-title"><header className="flex items-start justify-between border-b border-white/10 px-5 py-4"><div><span className="font-mono text-[9px] font-bold tracking-[0.12em] text-[#65dcae] uppercase">Frame export</span><h2 className="mt-1 text-base font-semibold" id="export-title">Export transparent PNG</h2></div><button type="button" className="p-1 text-xl leading-none text-[#7e8984] hover:text-white" onClick={closeExport} aria-label="Close">×</button></header>{pendingExport ? <div className="grid gap-4 p-5"><ExportPreview key={`bounded-${pendingExport.url}`} src={pendingExport.url} alt="Final transparent PNG preview" footer={exportPreviewFooter} /><div className="grid gap-1"><strong className="text-xs font-semibold">{pendingExport.scope === "scene" ? "Entire scene" : "Canvas frame"} ready</strong>{didSaveExport ? <a className="w-fit max-w-full truncate font-mono text-[10px] text-[#75e5b9] underline decoration-[#75e5b9]/40 underline-offset-2 hover:text-[#a2f3d3]" href={pendingExport.url} target="_blank" rel="noreferrer" title="Open the exported PNG">{pendingExport.filename} ↗</a> : <span className="truncate font-mono text-[10px] text-[#718079]">{pendingExport.filename}</span>}<span className="text-[10px] text-[#718079]">{pendingExport.width} × {pendingExport.height}px · {pendingExport.pixelRatio.toFixed(2)}× · transparent PNG</span>{exportStatus && <span className="mt-1 text-[10px] text-[#aab5b0]" role="status">{exportStatus}</span>}</div></div> : <div className="grid gap-4 p-5"><p className="m-0 text-[11px] leading-5 text-[#7e8984]">Choose whether to preserve the visible Canvas crop or include every projected DOM layer. Both exports omit Toretto's Canvas grid and use a transparent background.</p><div className="grid grid-cols-2 gap-3">{["viewport", "scene"].map((scope) => { const preview = exportPreviews[scope]; const selected = exportScope === scope; return <button type="button" key={scope} className={`overflow-hidden rounded-xl border text-start transition-colors ${selected ? "border-[#66e4b3]/60 bg-[#66e4b3]/[0.06]" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"}`} aria-pressed={selected} onClick={() => setExportScope(scope)}><div className="flex h-40 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-[length:14px_14px] bg-[position:0_0,0_7px,7px_-7px,-7px_0px]">{preview?.url ? <img className="block h-full w-full object-contain object-center" src={preview.url} alt={`${scope} export preview`} /> : <span className="text-[10px] text-[#66716c]">{preview?.error || (isPreviewingExport ? "Rendering preview…" : "Preview unavailable")}</span>}</div><div className="grid gap-1 p-3"><strong className="text-[11px] font-semibold text-[#e4ebe8]">{scope === "viewport" ? "Canvas frame" : "Entire scene"}</strong><span className="text-[9px] leading-4 text-[#718079]">{scope === "viewport" ? "Exact visible Canvas crop" : "Every projected layer, unclipped"}</span>{preview?.captureWidth && <span className="font-mono text-[9px] text-[#5f6c66]">{preview.captureWidth} × {preview.captureHeight} CSS px</span>}</div></button>; })}</div>{exportStatus && <p className="m-0 text-[10px] text-[#ffaaa5]" role="alert">{exportStatus}</p>}</div>}<footer className="flex items-center justify-between border-t border-white/10 px-5 py-3"><span className="text-[9px] text-[#68746e]">PNG · transparent · up to 4× · 16,384px max</span><div className="flex gap-2">{pendingExport ? <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={backToExportOptions}>Back</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8]" onClick={() => void saveExport()}>Save PNG…</button></> : <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={closeExport}>Cancel</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8] disabled:opacity-50" disabled={isPreviewingExport || isExporting} onClick={() => void exportFrame(exportScope)}>{isExporting ? "Rendering…" : "Preview…"}</button></>}</div></footer></section></div>}
+      {exportOpen && <ExportDialog
+        kind={exportKind}
+        setKind={setExportKind}
+        format={animationFormat}
+        setFormat={setAnimationFormat}
+        fps={animationFps}
+        setFps={setAnimationFps}
+        scale={animationScale}
+        setScale={setAnimationScale}
+        scope={exportScope}
+        setScope={setExportScope}
+        duration={timelineDuration}
+        capabilities={animationCapabilities}
+        previews={exportPreviews}
+        isPreviewing={isPreviewingExport}
+        isExporting={isExporting}
+        progress={exportProgress}
+        status={exportStatus}
+        pending={pendingExport}
+        didSave={didSaveExport}
+        previewFooter={exportPreviewFooter}
+        onClose={closeExport}
+        onBack={backToExportOptions}
+        onPreview={() => void (exportKind === "animation" ? exportAnimation() : exportFrame(exportScope))}
+        onSave={() => void saveExport()}
+      />}
     </div>
   );
 }

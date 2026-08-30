@@ -29,6 +29,8 @@ npm run dev
 
 Build the production bundle with `npm run build`.
 
+Animation export renders the timeline deterministically, one PNG frame at a time. The local studio service then packages PNG sequences or uses `ffmpeg` from `PATH` to encode MP4/H.264, transparent WebM/VP9, and transparent ProRes 4444. The static production bundle keeps still export available but requires a future native studio service for encoded animation output.
+
 ## Contributing and security
 
 Contributions are welcome under the [contribution guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md).

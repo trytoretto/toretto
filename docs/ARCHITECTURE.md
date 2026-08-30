@@ -12,7 +12,7 @@ The extension should be the preferred path for signed-in applications, JavaScrip
 
 ### Standalone studio
 
-The studio is the authoring and output runtime. It accepts sanitized HTML, saved website packages, rendered Chromium snapshots, PDFs, and extension captures. It owns camera composition, animation timelines, reusable motion presets, transparent still export, future video export, and portable scene files.
+The studio is the authoring and output runtime. It accepts sanitized HTML, saved website packages, rendered Chromium snapshots, PDFs, and extension captures. It owns camera composition, animation timelines, reusable motion presets, transparent still and animation export, and portable scene files.
 
 Background Chromium capture is deliberately a snapshot adapter. It is useful for public and local-development pages, but it cannot reproduce every live browser state and should not become a second browser implementation.
 
@@ -25,7 +25,9 @@ The engine should be extracted behind host-neutral contracts:
 - `CameraState`: pan, orbit, roll, zoom, lens, fit, and Canvas dimensions.
 - `ExplosionState`: explosion amount, per-node offsets, clipping policy, and layer filtering.
 - `Timeline`: keyframes over camera, explosion, node visibility, and presentation properties.
-- `Exporter`: Canvas frame, entire scene, transparent still, and later frame-sequence/video output.
+- `Exporter`: Canvas frame, entire scene, transparent still, deterministic frame sequences, and encoded video output.
+
+The renderer is container-independent: it evaluates the timeline at explicit timestamps and emits numbered transparent PNG frames. A local encoder service packages those frames as a ZIP or sends them to FFmpeg for MP4/H.264, WebM/VP9 with alpha, or ProRes 4444 with alpha. The current Vite service proves the boundary; a native Rust studio service can replace it without changing timeline evaluation or the export UI.
 
 The extension adapter references live nodes. The studio adapter references sanitized or frozen nodes. Scene and animation data must never depend on extension-only object identities.
 

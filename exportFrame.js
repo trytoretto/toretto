@@ -147,7 +147,12 @@ async function renderTransparentPng(camera, scope, preview, options = {}) {
     if (!width || !height) throw new Error("The canvas has no visible area to export.");
 
     const previewScale = Math.min(1, 480 / width, 280 / height);
-    const pixelRatio = preview ? previewScale : exportScale(width, height);
+    const requestedRatio = Number(options.pixelRatio);
+    const pixelRatio = preview
+      ? previewScale
+      : Number.isFinite(requestedRatio) && requestedRatio > 0
+        ? Math.min(requestedRatio, exportScale(width, height))
+        : exportScale(width, height);
     const outputWidth = Math.round(width * pixelRatio);
     const outputHeight = Math.round(height * pixelRatio);
     let blob;
