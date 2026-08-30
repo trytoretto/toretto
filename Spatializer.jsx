@@ -463,11 +463,13 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [sceneTransform, setSceneTransform] = useState(DEFAULT_SCENE_TRANSFORM);
   const [explosionField, setExplosionField] = useState(DEFAULT_EXPLOSION_FIELD);
   const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [timelineOpen, setTimelineOpen] = useState(true);
   const [timelineDuration, setTimelineDuration] = useState(DEFAULT_TIMELINE_DURATION);
   const [playhead, setPlayhead] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [keyframes, setKeyframes] = useState([]);
   const [selectedKeyframeId, setSelectedKeyframeId] = useState("baseline");
+  const [keyframeDragPreview, setKeyframeDragPreview] = useState(null);
   const [mode, setMode] = useState("orbit");
   const [orientation, setOrientation] = useState(IDENTITY_ORIENTATION);
   const [orientationInspectorOpen, setOrientationInspectorOpen] = useState(false);
@@ -476,7 +478,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [fitScale, setFitScale] = useState(0.7);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isExplosionImmediate, setIsExplosionImmediate] = useState(true);
   const [isSettlingFlat, setIsSettlingFlat] = useState(false);
   const [isControlHeld, setIsControlHeld] = useState(false);
@@ -837,15 +838,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     return () => resizeRef.current?.disconnect();
   }, [fitBaseView]);
 
-  useEffect(() => {
-    const handleFullscreen = () => {
-      setIsFullscreen(document.fullscreenElement === rootRef.current);
-      requestAnimationFrame(fitBaseView);
-    };
-    document.addEventListener("fullscreenchange", handleFullscreen);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreen);
-  }, [fitBaseView]);
-
   const flatten = () => {
     applyExplosionPosition(0);
   };
@@ -951,11 +943,55 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
 
   const moveKeyframe = useCallback((id, clientX) => {
     const rect = timelineMarkersRef.current?.getBoundingClientRect();
-    if (!rect?.width || id === "baseline") return;
+    if (!rect?.width) return;
     const proposedTime = Math.max(0.01, Math.min(
       timelineDuration,
       (clientX - rect.left) / rect.width * timelineDuration,
     ));
+    const collisionTolerance = Math.max(0.01, timelineDuration * 12 / rect.width);
+    const orderedFrames = [...keyframes].sort((left, right) => left.time - right.time);
+    const draggedFrame = orderedFrames.find((frame) => frame.id === id);
+    if (!draggedFrame) return;
+    const swapTarget = orderedFrames
+      .filter((frame) => frame.id !== id)
+      .map((frame) => ({ frame, distance: Math.abs(frame.time - proposedTime) }))
+      .filter(({ distance }) => distance <= collisionTolerance)
+      .sort((left, right) => left.distance - right.distance)[0]?.frame;
+    if (id === "baseline") {
+      if (!swapTarget || swapTarget.id === "baseline" || keyframeDragRef.current?.swapComplete) return;
+      keyframeDragRef.current.swapComplete = true;
+      setKeyframes((current) => current.map((frame) => {
+        if (frame.id === "baseline") return { ...frame, state: swapTarget.state };
+        if (frame.id === swapTarget.id) return { ...frame, state: draggedFrame.state };
+        return frame;
+      }));
+      setSelectedKeyframeId(swapTarget.id);
+      applyAnimationState(draggedFrame.state);
+      return;
+    }
+    if (swapTarget?.id === "baseline") {
+      if (keyframeDragRef.current?.lastSwapTargetId === "baseline") return;
+      keyframeDragRef.current.lastSwapTargetId = "baseline";
+      keyframeDragRef.current.swapComplete = true;
+      setKeyframes((current) => current.map((frame) => {
+        if (frame.id === "baseline") return { ...frame, state: draggedFrame.state };
+        if (frame.id === id) return { ...frame, state: swapTarget.state };
+        return frame;
+      }));
+      setSelectedKeyframeId("baseline");
+      applyAnimationState(draggedFrame.state);
+      return;
+    }
+    if (swapTarget) {
+      keyframeDragRef.current.lastSwapTargetId = swapTarget.id;
+      setKeyframes((current) => current.map((frame) => {
+        if (frame.id === id) return { ...frame, time: swapTarget.time };
+        if (frame.id === swapTarget.id) return { ...frame, time: draggedFrame.time };
+        return frame;
+      }).sort((left, right) => left.time - right.time));
+      return;
+    }
+    if (keyframeDragRef.current) keyframeDragRef.current.lastSwapTargetId = null;
     setKeyframes((current) => {
       const ordered = [...current].sort((left, right) => left.time - right.time);
       const index = ordered.findIndex((frame) => frame.id === id);
@@ -966,28 +1002,42 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       ordered[index] = { ...ordered[index], time: nextTime };
       return ordered.sort((left, right) => left.time - right.time);
     });
-  }, [timelineDuration]);
+  }, [applyAnimationState, keyframes, timelineDuration]);
 
   const beginKeyframeDrag = useCallback((event, frame) => {
     event.preventDefault();
     event.stopPropagation();
     setIsPlaying(false);
     setSelectedKeyframeId(frame.id);
+    setKeyframeDragPreview(null);
     applyAnimationState(frame.state);
     keyframeDragRef.current = {
       id: frame.id,
       startX: event.clientX,
       moved: false,
+      lastSwapTargetId: null,
+      swapComplete: false,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }, [applyAnimationState]);
 
   const dragKeyframe = useCallback((event) => {
     const drag = keyframeDragRef.current;
-    if (!drag || drag.id === "baseline") return;
+    if (!drag || drag.swapComplete) return;
     if (Math.abs(event.clientX - drag.startX) > 2) drag.moved = true;
-    if (drag.moved) moveKeyframe(drag.id, event.clientX);
-  }, [moveKeyframe]);
+    if (drag.moved) {
+      const rect = timelineMarkersRef.current?.getBoundingClientRect();
+      if (rect?.width) {
+        setKeyframeDragPreview({
+          time: Math.max(0, Math.min(
+            timelineDuration,
+            (event.clientX - rect.left) / rect.width * timelineDuration,
+          )),
+        });
+      }
+      moveKeyframe(drag.id, event.clientX);
+    }
+  }, [moveKeyframe, timelineDuration]);
 
   const endKeyframeDrag = useCallback((event) => {
     if (!keyframeDragRef.current) return;
@@ -995,6 +1045,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     keyframeDragRef.current = null;
+    setKeyframeDragPreview(null);
   }, []);
 
   useEffect(() => {
@@ -1039,11 +1090,6 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
     }
     setIsPlaying(true);
   }, [applyAnimationState, isPlaying, keyframes, playhead, selectedKeyframeId, timelineDuration]);
-
-  const toggleFullscreen = async () => {
-    if (document.fullscreenElement) await document.exitFullscreen();
-    else await rootRef.current?.requestFullscreen();
-  };
 
   const exportFrame = async (scope, padding = scenePadding) => {
     if (!cameraRef.current || isExporting) return;
@@ -1689,17 +1735,44 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
           </div>
           ))}
         </div>
-        <div className="spatializer-actions flex flex-nowrap gap-1 border-s border-white/10 ps-4">
+        <div className="spatializer-actions flex flex-nowrap gap-1">
           <button type="button" className={`${TOOLBAR_BUTTON} disabled:cursor-wait disabled:opacity-45`} disabled={isFraming} onClick={() => void centerView()}>Center</button>
           <button type="button" className={`${TOOLBAR_BUTTON} disabled:cursor-wait disabled:opacity-45`} disabled={isFraming} onClick={() => void fitScene()}>Fit</button>
           <button type="button" className={TOOLBAR_BUTTON} onClick={reset}>Reset</button>
-          <button type="button" className={`${TOOLBAR_BUTTON} ${inspectorOpen ? TOOLBAR_ACTIVE : ""}`} aria-pressed={inspectorOpen} onClick={() => setInspectorOpen((current) => !current)}>Inspector</button>
-          <button type="button" className={TOOLBAR_BUTTON} onClick={() => void toggleFullscreen()}>{isFullscreen ? "Exit full screen" : "Full screen"}</button>
+        </div>
+        <div className="spatializer-panel-toggles">
+          <button
+            type="button"
+            className={`${TOOLBAR_BUTTON} spatializer-panel-toggle ${timelineOpen ? TOOLBAR_ACTIVE : ""}`}
+            aria-label={timelineOpen ? "Hide timeline" : "Show timeline"}
+            aria-pressed={timelineOpen}
+            title="Timeline"
+            onClick={() => setTimelineOpen((current) => !current)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <path d="M1.75 9.5h12.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={`${TOOLBAR_BUTTON} spatializer-panel-toggle ${inspectorOpen ? TOOLBAR_ACTIVE : ""}`}
+            aria-label={inspectorOpen ? "Hide inspector" : "Show inspector"}
+            aria-pressed={inspectorOpen}
+            title="Inspector"
+            onClick={() => setInspectorOpen((current) => !current)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+              <path d="M10.5 2.75v10.5" />
+            </svg>
+          </button>
         </div>
       </header>
       <main
         className={`spatializer-camera mode-${effectiveMode}`}
         ref={cameraRef}
+        data-timeline-open={timelineOpen ? "true" : "false"}
         tabIndex={0}
         aria-label="Spatial canvas. Drag to orbit or pan, Control-drag to tumble, Option-drag to roll, use the wheel to zoom, and arrow keys to move."
         onPointerDown={beginDrag}
@@ -2001,7 +2074,7 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
               ? "Drag to pan · Wheel to zoom"
               : "Release Shift to orbit · Wheel to zoom"}
         </div>
-        <section
+        {timelineOpen && <section
           className="spatializer-timeline"
           data-spatializer-ignore=""
           data-export-ignore=""
@@ -2068,11 +2141,16 @@ export function Spatializer({ children, contentKey, onOpenSource }) {
                     setKeyframes((current) => current.filter((candidate) => candidate.id !== frame.id));
                   }
                 }}
-                title={frame.id === "baseline" ? "Baseline · updates automatically at 0s" : `${frame.time.toFixed(2)} seconds · drag to move`}
+                title={frame.id === "baseline" ? "Baseline · drag onto another keyframe to swap states" : `${frame.time.toFixed(2)} seconds · drag to move or swap`}
               />)}
             </div>
+            {keyframeDragPreview && <output
+              className="spatializer-keyframe-drag-tooltip"
+              style={{ insetInlineStart: `${keyframeDragPreview.time / timelineDuration * 100}%` }}
+              aria-live="off"
+            >{keyframeDragPreview.time.toFixed(2)}s</output>}
           </div>
-        </section>
+        </section>}
       </main>
       {exportOpen && <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#040706]/80 p-6 backdrop-blur-xl" role="presentation" onPointerDown={(event) => event.target === event.currentTarget && closeExport()}><section className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/10 bg-[#151a18] text-[#e9efec] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="export-title"><header className="flex items-start justify-between border-b border-white/10 px-5 py-4"><div><span className="font-mono text-[9px] font-bold tracking-[0.12em] text-[#65dcae] uppercase">Frame export</span><h2 className="mt-1 text-base font-semibold" id="export-title">Export transparent PNG</h2></div><button type="button" className="p-1 text-xl leading-none text-[#7e8984] hover:text-white" onClick={closeExport} aria-label="Close">×</button></header>{pendingExport ? <div className="grid gap-4 p-5"><ExportPreview key={`bounded-${pendingExport.url}`} src={pendingExport.url} alt="Final transparent PNG preview" footer={exportPreviewFooter} /><div className="grid gap-1"><strong className="text-xs font-semibold">{pendingExport.scope === "scene" ? "Entire scene" : "Canvas frame"} ready</strong>{didSaveExport ? <a className="w-fit max-w-full truncate font-mono text-[10px] text-[#75e5b9] underline decoration-[#75e5b9]/40 underline-offset-2 hover:text-[#a2f3d3]" href={pendingExport.url} target="_blank" rel="noreferrer" title="Open the exported PNG">{pendingExport.filename} ↗</a> : <span className="truncate font-mono text-[10px] text-[#718079]">{pendingExport.filename}</span>}<span className="text-[10px] text-[#718079]">{pendingExport.width} × {pendingExport.height}px · {pendingExport.pixelRatio.toFixed(2)}× · transparent PNG</span>{exportStatus && <span className="mt-1 text-[10px] text-[#aab5b0]" role="status">{exportStatus}</span>}</div></div> : <div className="grid gap-4 p-5"><p className="m-0 text-[11px] leading-5 text-[#7e8984]">Choose whether to preserve the visible Canvas crop or include every projected DOM layer. Both exports omit Toretto's Canvas grid and use a transparent background.</p><div className="grid grid-cols-2 gap-3">{["viewport", "scene"].map((scope) => { const preview = exportPreviews[scope]; const selected = exportScope === scope; return <button type="button" key={scope} className={`overflow-hidden rounded-xl border text-start transition-colors ${selected ? "border-[#66e4b3]/60 bg-[#66e4b3]/[0.06]" : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"}`} aria-pressed={selected} onClick={() => setExportScope(scope)}><div className="flex h-40 items-center justify-center overflow-hidden border-b border-white/10 bg-[linear-gradient(45deg,#252b28_25%,transparent_25%),linear-gradient(-45deg,#252b28_25%,transparent_25%),linear-gradient(45deg,transparent_75%,#252b28_75%),linear-gradient(-45deg,transparent_75%,#252b28_75%)] bg-[length:14px_14px] bg-[position:0_0,0_7px,7px_-7px,-7px_0px]">{preview?.url ? <img className="block h-full w-full object-contain object-center" src={preview.url} alt={`${scope} export preview`} /> : <span className="text-[10px] text-[#66716c]">{preview?.error || (isPreviewingExport ? "Rendering preview…" : "Preview unavailable")}</span>}</div><div className="grid gap-1 p-3"><strong className="text-[11px] font-semibold text-[#e4ebe8]">{scope === "viewport" ? "Canvas frame" : "Entire scene"}</strong><span className="text-[9px] leading-4 text-[#718079]">{scope === "viewport" ? "Exact visible Canvas crop" : "Every projected layer, unclipped"}</span>{preview?.captureWidth && <span className="font-mono text-[9px] text-[#5f6c66]">{preview.captureWidth} × {preview.captureHeight} CSS px</span>}</div></button>; })}</div>{exportStatus && <p className="m-0 text-[10px] text-[#ffaaa5]" role="alert">{exportStatus}</p>}</div>}<footer className="flex items-center justify-between border-t border-white/10 px-5 py-3"><span className="text-[9px] text-[#68746e]">PNG · transparent · up to 4× · 16,384px max</span><div className="flex gap-2">{pendingExport ? <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={backToExportOptions}>Back</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8]" onClick={() => void saveExport()}>Save PNG…</button></> : <><button type="button" className="h-8 rounded-md border border-white/10 px-3 text-[11px] font-medium text-[#9ca5a3] hover:bg-white/[0.06]" onClick={closeExport}>Cancel</button><button type="button" className="h-8 rounded-md border border-[#66e4b3] bg-[#66e4b3] px-3 text-[11px] font-semibold text-[#102019] hover:bg-[#8aefc8] disabled:opacity-50" disabled={isPreviewingExport || isExporting} onClick={() => void exportFrame(exportScope)}>{isExporting ? "Rendering…" : "Preview…"}</button></>}</div></footer></section></div>}
     </div>
